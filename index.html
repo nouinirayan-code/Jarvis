@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>L'Art de la Guerre</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <div id="topbar" class="hud">
+      <div class="res"><span class="icon gold"></span><span id="gold">0</span></div>
+      <div class="res"><span class="icon pop"></span><span id="pop">0/0</span></div>
+      <button id="idleBtn" class="small" title="Sélectionner un ouvrier inactif (touche .)">Ouvriers inactifs : <span id="idleCount">0</span></button>
+      <div class="spacer"></div>
+      <div id="clock">00:00</div>
+      <button id="speedBtn" class="small" title="Vitesse du jeu">Vitesse x1</button>
+      <button id="pauseBtn" class="small" title="Pause (P)">Pause</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <div id="bottombar" class="hud">
+      <canvas id="minimap" width="240" height="160"></canvas>
+      <div id="selection"></div>
+      <div id="commands"></div>
+    </div>
+
+    <div id="tooltip" class="hidden"></div>
+
+    <div id="menu" class="overlay">
+      <div class="panel">
+        <h1>L'Art de la Guerre</h1>
+        <p class="subtitle">Jeu de stratégie en temps réel — commandez votre armée et détruisez la base ennemie.</p>
+        <h3>Difficulté</h3>
+        <div id="difficulty" class="choices">
+          <button data-diff="facile">Facile</button>
+          <button data-diff="normal" class="active">Normal</button>
+          <button data-diff="difficile">Difficile</button>
+        </div>
+        <button id="startBtn" class="primary">Commencer la bataille</button>
+        <details>
+          <summary>Comment jouer</summary>
+          <div class="help">
+            <p><b>Objectif :</b> détruire tous les bâtiments ennemis (en rouge) avant qu'il ne détruise les vôtres.</p>
+            <ul>
+              <li><b>Clic gauche</b> : sélectionner (glisser pour une sélection en rectangle, <kbd>Maj</kbd> pour ajouter, double-clic pour tous les types identiques).</li>
+              <li><b>Clic droit</b> : ordre contextuel — déplacer, attaquer, récolter une mine d'or, construire, point de ralliement.</li>
+              <li><kbd>A</kbd> + clic : attaque-mouvement (les unités attaquent tout ce qu'elles croisent).</li>
+              <li><kbd>S</kbd> stop, <kbd>H</kbd> tenir la position, <kbd>B</kbd> menu de construction (ouvriers).</li>
+              <li><kbd>Ctrl</kbd>+<kbd>1-9</kbd> : créer un groupe, <kbd>1-9</kbd> : le rappeler (deux fois pour centrer la caméra).</li>
+              <li><kbd>Flèches</kbd> / bord de l'écran / clic molette : déplacer la caméra. Molette : zoom. <kbd>Espace</kbd> : centrer.</li>
+              <li><kbd>.</kbd> : ouvrier inactif, <kbd>P</kbd> : pause, <kbd>Échap</kbd> : annuler.</li>
+            </ul>
+            <p><b>Unités :</b> les <b>lanciers</b> battent la cavalerie, les <b>archers</b> battent les lanciers, les <b>chevaliers</b> battent archers et catapultes. Les <b>catapultes</b> rasent les bâtiments.</p>
+            <p><b>Économie :</b> les ouvriers récoltent l'or et le rapportent au Quartier Général. Construisez des maisons pour augmenter la population.</p>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div id="pauseScreen" class="overlay hidden">
+      <div class="panel">
+        <h2>Pause</h2>
+        <button id="resumeBtn" class="primary">Reprendre</button>
+        <button id="quitBtn">Abandonner la partie</button>
+      </div>
+    </div>
+
+    <div id="endScreen" class="overlay hidden">
+      <div class="panel">
+        <h1 id="endTitle">Victoire !</h1>
+        <table id="endStats"></table>
+        <button id="againBtn" class="primary">Nouvelle partie</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
