@@ -140,7 +140,7 @@ function aiUpdate(dt) {
 }
 
 function launchAttack(units) {
-  const targets = G.buildings.filter(b => b.team === PLAYER);
+  const targets = G.buildings.filter(b => b.team === PLAYER && b.type !== 'wall');
   if (!targets.length) return;
   let cx = 0, cy = 0;
   for (const u of units) { cx += u.x; cy += u.y; }

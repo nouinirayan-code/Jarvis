@@ -277,6 +277,8 @@ function drawUnit(ctx, u, selected, hovered) {
       ctx.fillStyle = '#6b4f35';
       ctx.beginPath(); ctx.ellipse(0, 0, r + 2, r * 0.6, 0, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(r + 2, 0, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = dark;
+      ctx.beginPath(); ctx.ellipse(-2, 0, r * 0.8, r * 0.62, 0, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       ctx.fillStyle = col; ctx.strokeStyle = dark; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(0, -3, r * 0.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
@@ -416,29 +418,64 @@ function drawBuildingBody(ctx, b, x, y, w, h, col, dark, prog) {
   const bx = x + inset, by = y + inset, bw = w - inset * 2, bh = h - inset * 2;
   switch (b.type) {
     case 'hq': {
-      ctx.fillStyle = '#a8a29e'; ctx.fillRect(bx, by + 10, bw, bh - 10);
-      ctx.strokeStyle = '#57534e'; ctx.lineWidth = 2; ctx.strokeRect(bx, by + 10, bw, bh - 10);
-      // tours d'angle
-      ctx.fillStyle = '#78716c';
-      for (const [cx, cy] of [[bx, by + 8], [bx + bw - 16, by + 8], [bx, by + bh - 16], [bx + bw - 16, by + bh - 16]]) {
-        ctx.fillRect(cx, cy, 16, 16);
-        ctx.fillStyle = col; ctx.fillRect(cx + 3, cy + 3, 10, 10); ctx.fillStyle = '#78716c';
+      // Château : courtine crénelée, tours d'angle, donjon central et porte
+      const stone = '#9c968f', stoneDark = '#5f5a54', stoneLight = '#b8b2aa';
+      ctx.fillStyle = stone; ctx.fillRect(bx + 6, by + 8, bw - 12, bh - 12);
+      ctx.strokeStyle = stoneDark; ctx.lineWidth = 2; ctx.strokeRect(bx + 6, by + 8, bw - 12, bh - 12);
+      ctx.fillStyle = '#6f8f4e'; ctx.fillRect(bx + 14, by + 16, bw - 28, bh - 28); // cour intérieure
+      ctx.fillStyle = stoneDark;
+      for (let i = bx + 10; i < bx + bw - 12; i += 8) ctx.fillRect(i, by + 5, 4, 4);
+      // tours rondes
+      for (const [cx, cy] of [[bx + 9, by + 11], [bx + bw - 9, by + 11], [bx + 9, by + bh - 7], [bx + bw - 9, by + bh - 7]]) {
+        ctx.fillStyle = stone; ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = stoneDark; ctx.stroke();
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.fill();
       }
+      // donjon
+      ctx.fillStyle = stoneLight; ctx.fillRect(b.x - 16, b.y - 20, 32, 30);
+      ctx.strokeStyle = stoneDark; ctx.strokeRect(b.x - 16, b.y - 20, 32, 30);
+      ctx.fillStyle = stoneDark;
+      for (let i = b.x - 16; i < b.x + 16; i += 8) ctx.fillRect(i, b.y - 24, 5, 5);
+      ctx.fillStyle = '#292524'; ctx.fillRect(b.x - 3, b.y - 12, 6, 9);
+      // porte
+      ctx.fillStyle = '#3b2a1a';
+      ctx.beginPath(); ctx.moveTo(b.x - 8, by + bh - 4); ctx.lineTo(b.x - 8, by + bh - 14);
+      ctx.arc(b.x, by + bh - 14, 8, Math.PI, 0); ctx.lineTo(b.x + 8, by + bh - 4); ctx.fill();
+      // bannière
+      ctx.fillStyle = '#e7e5e4'; ctx.fillRect(b.x - 1, b.y - 46, 2, 24);
       ctx.fillStyle = col;
-      ctx.beginPath(); ctx.moveTo(b.x - 20, b.y); ctx.lineTo(b.x, b.y - 26); ctx.lineTo(b.x + 20, b.y); ctx.fill();
-      ctx.fillStyle = dark; ctx.fillRect(b.x - 16, b.y, 32, 20);
-      ctx.fillStyle = '#292524'; ctx.fillRect(b.x - 6, b.y + 8, 12, 12);
-      // drapeau
-      ctx.fillStyle = '#e7e5e4'; ctx.fillRect(b.x - 1, b.y - 44, 2, 20);
-      ctx.fillStyle = col; ctx.fillRect(b.x + 1, b.y - 44, 14, 9);
+      ctx.beginPath(); ctx.moveTo(b.x + 1, b.y - 46); ctx.lineTo(b.x + 18, b.y - 46); ctx.lineTo(b.x + 14, b.y - 41); ctx.lineTo(b.x + 18, b.y - 36); ctx.lineTo(b.x + 1, b.y - 36); ctx.fill();
+      break;
+    }
+    case 'wall': {
+      // Section de muraille ; se raccorde aux murailles voisines du même camp
+      const wallAt = (tx, ty) => {
+        if (!inMap(tx, ty)) return false;
+        const o = G.byId.get(G.occ[tileIdx(tx, ty)]);
+        return !!o && o.type === 'wall' && o.team === b.team;
+      };
+      const l = wallAt(b.tx - 1, b.ty) ? 0 : 3, r = wallAt(b.tx + 1, b.ty) ? 0 : 3;
+      const t = wallAt(b.tx, b.ty - 1) ? 0 : 3, d = wallAt(b.tx, b.ty + 1) ? 0 : 3;
+      ctx.fillStyle = '#8f8a83';
+      ctx.fillRect(x + l, y + t, w - l - r, h - t - d);
+      ctx.fillStyle = '#a9a39b';
+      ctx.fillRect(x + l + 3, y + t + 3, w - l - r - 6, h - t - d - 6);
+      ctx.fillStyle = '#5f5a54';
+      ctx.fillRect(x + 4, y + 4, 7, 7); ctx.fillRect(x + w - 11, y + 4, 7, 7);
+      ctx.fillRect(x + 4, y + h - 11, 7, 7); ctx.fillRect(x + w - 11, y + h - 11, 7, 7);
+      ctx.fillStyle = col; ctx.fillRect(x + w / 2 - 3, y + h / 2 - 3, 6, 6);
       break;
     }
     case 'house': {
       ctx.fillStyle = '#d6c7a1'; ctx.fillRect(bx + 4, by + 18, bw - 8, bh - 18);
       ctx.strokeStyle = '#7c6a4a'; ctx.lineWidth = 2; ctx.strokeRect(bx + 4, by + 18, bw - 8, bh - 18);
-      ctx.fillStyle = col;
+      ctx.fillStyle = '#c9a44c';
       ctx.beginPath(); ctx.moveTo(bx, by + 20); ctx.lineTo(b.x, by); ctx.lineTo(bx + bw, by + 20); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = dark; ctx.stroke();
+      ctx.strokeStyle = '#8a6d2a'; ctx.stroke();
+      ctx.strokeStyle = 'rgba(120,90,30,0.6)'; ctx.lineWidth = 1;
+      for (let i = 6; i < bw; i += 6) { ctx.beginPath(); ctx.moveTo(bx + i, by + 20); ctx.lineTo(b.x, by + 2); ctx.stroke(); }
+      ctx.fillStyle = col; ctx.fillRect(bx + bw - 12, by + 22, 6, 9);
       ctx.fillStyle = '#5c4a35'; ctx.fillRect(b.x - 5, by + bh - 14, 10, 14);
       break;
     }

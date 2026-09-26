@@ -1,7 +1,8 @@
-# L'Art de la Guerre
+# Guerre des Royaumes
 
-Jeu de stratégie en temps réel (RTS) jouable dans le navigateur : récoltez de l'or, construisez votre base,
-entraînez une armée et commandez-la pour détruire la base ennemie contrôlée par l'ordinateur.
+Jeu de stratégie médiéval en temps réel, jouable dans le navigateur. An de grâce 1214 : le Seigneur Rouge menace vos terres.
+Rassemblez vos paysans, fortifiez votre domaine, levez une armée de piquiers, d'archers, de chevaliers et de trébuchets,
+puis commandez-la pour abattre le château ennemi.
 
 Aucune dépendance ni compilation : HTML5 Canvas et JavaScript pur.
 
@@ -18,7 +19,7 @@ python3 -m http.server 8000
 
 ## Objectif
 
-Détruire **tous les bâtiments ennemis** (en rouge) avant que l'ennemi ne détruise les vôtres (en bleu).
+Raser **le château et tous les bâtiments** du Seigneur Rouge (en rouge) avant qu'il ne détruise les vôtres (en bleu). Les murailles ne comptent pas.
 
 ## Contrôles
 
@@ -30,12 +31,13 @@ Détruire **tous les bâtiments ennemis** (en rouge) avant que l'ennemi ne détr
 | Ordre contextuel (déplacer, attaquer, récolter, construire, ralliement) | Clic droit |
 | Attaque-mouvement | `A` puis clic (sur la carte ou la mini-carte) |
 | Stop / Tenir la position | `S` / `H` |
-| Menu de construction (ouvriers) | `B` puis `Q` `W` `E` `R` `T` `Y` |
+| Menu de construction (paysans) | `B` puis `Q` `W` `E` `R` `T` `Y` `U` |
+| Poser plusieurs bâtiments (ex. une ligne de murailles) | `Maj` + clic |
 | Former des unités (bâtiment sélectionné) | `Q` `W` … |
 | Groupes de contrôle | `Ctrl` + `1`–`9` pour créer, `1`–`9` pour rappeler (deux fois = centrer) |
 | Caméra | Flèches, bord de l'écran, clic molette, mini-carte ; molette = zoom |
 | Centrer la caméra | `Espace` |
-| Ouvrier inactif suivant | `.` |
+| Paysan inactif suivant | `.` |
 | Pause | `P` |
 | Annuler | `Échap` ou clic droit |
 
@@ -43,22 +45,23 @@ Détruire **tous les bâtiments ennemis** (en rouge) avant que l'ennemi ne détr
 
 | Unité | Coût | Bâtiment | Rôle |
 | --- | --- | --- | --- |
-| Ouvrier | 50 | Quartier Général | Récolte l'or, construit |
-| Lancier | 60 | Caserne | Infanterie robuste, **fort contre la cavalerie** |
-| Archer | 70 | Caserne | Attaque à distance, **fort contre les lanciers** |
-| Chevalier | 140 | Écurie | Rapide, **fort contre archers et catapultes** |
-| Catapulte | 200 | Atelier de siège | Dégâts de zone, **dévaste les bâtiments**, portée minimale |
+| Paysan | 50 | Château | Récolte l'or, bâtit les édifices |
+| Piquier | 60 | Caserne | Infanterie robuste, **brise les charges de cavalerie** |
+| Archer | 70 | Caserne | Tir à distance, **décime les piquiers** |
+| Chevalier | 140 | Écurie | Cavalerie lourde, **écrase archers et trébuchets** |
+| Trébuchet | 200 | Atelier de siège | Dégâts de zone, **abat murailles et châteaux**, portée minimale |
 
 ## Bâtiments
 
 | Bâtiment | Coût | Rôle |
 | --- | --- | --- |
-| Quartier Général | 400 | Forme les ouvriers, dépôt d'or, +10 population |
-| Maison | 100 | +8 population |
+| Château | 400 | Forme les paysans, reçoit l'or, +10 population |
+| Chaumière | 100 | +8 population |
 | Caserne | 150 | Lanciers et archers |
 | Écurie | 200 | Chevaliers (nécessite une caserne) |
-| Atelier de siège | 250 | Catapultes (nécessite une caserne) |
-| Tour de garde | 125 | Défense automatique à distance |
+| Atelier de siège | 250 | Trébuchets (nécessite une caserne) |
+| Tour d'archers | 125 | Défense automatique à distance |
+| Muraille | 15 | Rempart qui bloque le passage (se raccorde aux sections voisines) |
 
 ## Fonctionnalités
 

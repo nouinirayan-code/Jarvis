@@ -63,7 +63,7 @@ function startGame() {
   $('endScreen').classList.add('hidden');
   $('pauseScreen').classList.add('hidden');
   ui.running = true;
-  notify('Récoltez de l\'or, bâtissez une armée et détruisez la base ennemie !');
+  notify('Sire, levez votre armée et abattez le château du Seigneur Rouge !');
 }
 
 function centerOn(x, y) {
@@ -242,7 +242,7 @@ function startPlacing(type) {
     notify(`Nécessite : ${BUILDING_TYPES[def.requires].name}`);
     return;
   }
-  if (G.teams[PLAYER].gold < def.cost) { notify("Pas assez d'or"); return; }
+  if (G.teams[PLAYER].gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or"); return; }
   ui.placing = type;
   ui.mode = null;
 }
@@ -253,7 +253,9 @@ function placeBuilding(shift) {
   // Un seul ouvrier (le plus proche) construit ; les autres continuent leurs tâches.
   const def = BUILDING_TYPES[ui.placing];
   const cx = (ui.placeTx + def.w / 2) * TILE, cy = (ui.placeTy + def.h / 2) * TILE;
-  const builders = workers.length <= 3 ? workers : workers.slice().sort((a, b) =>
+  // En pose multiple (Maj), les paysans déjà sur un chantier y restent et enchaîneront ensuite.
+  const pool = shift ? workers.filter(w => !w.order || w.order.type !== 'build') : workers;
+  const builders = pool.length <= 3 ? pool : pool.slice().sort((a, b) =>
     Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy)).slice(0, 3);
   const b = tryPlaceBuilding(PLAYER, ui.placing, ui.placeTx, ui.placeTy, builders);
   if (b) {
@@ -295,7 +297,7 @@ function commandCard() {
     if (workers.length) {
       btns.push({ id: 'build', label: 'Construire', key: 'B', desc: 'Ouvrir le menu de construction.', action: () => { ui.buildMenu = true; } });
       btns.push({
-        id: 'gather', label: 'Récolter', key: 'G', desc: "Envoyer les ouvriers sélectionnés à la mine d'or la plus proche.",
+        id: 'gather', label: 'Récolter', key: 'G', desc: "Envoyer les paysans sélectionnés à la mine d'or la plus proche.",
         action: () => {
           const m = nearestMine(workers[0].x, workers[0].y);
           if (m) commandHarvest(workers, m);
@@ -410,7 +412,7 @@ function refreshSelectionPanel() {
     const e = sel[0];
     if (e.kind === 'mine') {
       html = `<div class="sel-single"><div class="portrait" style="background:#a16207">Or</div><div class="sel-info">
-        <h3>Mine d'or</h3><div class="desc">Clic droit avec des ouvriers pour récolter.</div>
+        <h3>Mine d'or</h3><div class="desc">Clic droit avec des paysans pour récolter.</div>
         <div>Or restant : <b style="color:#facc15">${Math.floor(e.gold)}</b> / ${e.maxGold}</div></div></div>`;
     } else {
       const def = e.def;
@@ -446,7 +448,7 @@ function refreshSelectionPanel() {
       }
       const letter = e.kind === 'unit' ? def.letter : def.name[0];
       html = `<div class="sel-single"><div class="portrait" style="${badgeStyle(e)}">${letter}</div><div class="sel-info">
-        <h3>${def.name}${e.team === ENEMY ? ' <span style="color:#f87171;font-size:12px">(ennemi)</span>' : ''}</h3>
+        <h3>${def.name}${e.team === ENEMY ? ' <span style="color:#f87171;font-size:12px">(Seigneur Rouge)</span>' : ''}</h3>
         <div class="hpbar"><div style="width:${f * 100}%;background:${hpColor(f)}"></div></div>
         <div style="color:#a8a29e">PV ${Math.ceil(e.hp)} / ${e.maxHp}</div>
         ${extra}</div></div>`;
@@ -732,8 +734,8 @@ function refreshHud() {
 
 function showEnd() {
   const win = G.over === 'victory';
-  $('endTitle').textContent = win ? 'Victoire !' : 'Défaite…';
-  $('endTitle').style.color = win ? '#4ade80' : '#f87171';
+  $('endTitle').textContent = win ? 'Victoire ! Le royaume est à vous' : 'Défaite… Votre château est tombé';
+  $('endTitle').style.color = win ? '#166534' : '#7a1f14';
   const p = G.teams[PLAYER].stats, e = G.teams[ENEMY].stats;
   const s = Math.floor(G.time);
   const rows = [
@@ -744,7 +746,7 @@ function showEnd() {
     ['Unités perdues', p.lost, e.lost],
     ['Bâtiments détruits', p.buildingsDestroyed, e.buildingsDestroyed],
   ];
-  $('endStats').innerHTML = `<tr><th></th><th style="color:${TEAM_COLORS[0]}">Vous</th><th style="color:${TEAM_COLORS[1]}">Ennemi</th></tr>` +
+  $('endStats').innerHTML = `<tr><th></th><th style="color:${TEAM_COLORS[0]}">Votre royaume</th><th style="color:${TEAM_COLORS[1]}">Seigneur Rouge</th></tr>` +
     rows.map(r => `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
   $('endScreen').classList.remove('hidden');
   ui.running = false;

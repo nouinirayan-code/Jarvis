@@ -254,7 +254,7 @@ function tryPlaceBuilding(team, type, tx, ty, workers) {
     notify(`Nécessite : ${BUILDING_TYPES[def.requires].name}`, team);
     return null;
   }
-  if (t.gold < def.cost) { notify("Pas assez d'or", team); return null; }
+  if (t.gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or", team); return null; }
   if (!canPlaceBuilding(type, tx, ty, team)) { notify('Emplacement invalide', team); return null; }
   t.gold -= def.cost;
   const b = addBuilding(type, team, tx, ty, false);
@@ -267,7 +267,7 @@ function queueTraining(b, type) {
   const def = UNIT_TYPES[type];
   if (!b.complete) return false;
   if (b.queue.length >= 5) { notify("File d'attente pleine", b.team); return false; }
-  if (t.gold < def.cost) { notify("Pas assez d'or", b.team); return false; }
+  if (t.gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or", b.team); return false; }
   t.gold -= def.cost;
   b.queue.push({ type, t: 0, started: false });
   return true;
@@ -320,7 +320,8 @@ function cleanupDead() {
 }
 
 function checkVictory() {
-  const alive = [0, 1].map(t => G.buildings.some(b => b.team === t));
+  // Les murailles seules ne suffisent pas à tenir un royaume.
+  const alive = [0, 1].map(t => G.buildings.some(b => b.team === t && b.type !== 'wall'));
   if (!alive[ENEMY]) G.over = 'victory';
   else if (!alive[PLAYER]) G.over = 'defeat';
 }
@@ -346,7 +347,7 @@ function findEnemyNear(u, range) {
     if (b.team === u.team || b.dead) continue;
     const d = edgeDist(u, b);
     if (d > range) continue;
-    const score = d + (b.type === 'tower' ? 0 : 100);
+    const score = d + (b.type === 'tower' ? 0 : b.type === 'wall' ? 160 : 100);
     if (score < bestScore) { bestScore = score; best = b; }
   }
   return best;
@@ -557,7 +558,7 @@ function dealDamage(attacker, target, base) {
   target.lastHit = G.time;
   if (target.team === PLAYER && G.attackAlertTimer <= 0 && attacker.team === ENEMY) {
     G.attackAlertTimer = 12;
-    notify(target.kind === 'building' ? 'Votre base est attaquée !' : 'Vos troupes sont attaquées !');
+    notify(target.kind === 'building' ? 'Aux armes ! Nos terres sont attaquées !' : 'Nos troupes sont prises à partie !');
     G.lastAlert = { x: target.x, y: target.y };
   }
   // Riposte des unités inactives
@@ -739,8 +740,15 @@ function updateBuild(u, dt, o) {
   const b = o.building;
   if (!b || b.dead || b.complete) {
     u.order = null;
-    // Après la construction, retourner récolter si possible
-    if (b && b.complete && u.lastMine && !u.lastMine.dead) u.order = { type: 'harvest', mine: u.lastMine };
+    // Enchaîner sur le chantier voisin (ex. une ligne de murailles), sinon retourner récolter
+    let next = null, nextD = 320;
+    for (const o2 of G.buildings) {
+      if (o2.team !== u.team || o2.complete || o2.dead) continue;
+      const d = Math.hypot(o2.x - u.x, o2.y - u.y);
+      if (d < nextD) { nextD = d; next = o2; }
+    }
+    if (next) u.order = { type: 'build', building: next };
+    else if (b && b.complete && u.lastMine && !u.lastMine.dead) u.order = { type: 'harvest', mine: u.lastMine };
     return;
   }
   if (!approachRect(u, dt, b, 'build' + b.id, 10)) return;
@@ -751,7 +759,7 @@ function updateBuild(u, dt, o) {
   b.hp = Math.min(b.maxHp, b.hp + b.maxHp * 0.9 * inc);
   if (b.progress >= 1) {
     b.complete = true;
-    notify(`${b.def.name} terminé(e)`, b.team);
+    notify(`Construction achevée : ${b.def.name}`, b.team);
   }
 }
 
@@ -788,7 +796,7 @@ function updateBuilding(b, dt) {
   if (!item.started) {
     const pop = teamPop(b.team);
     if (pop.used + def.pop > pop.cap) {
-      if (!b.popWarned) { notify('Population maximale atteinte : construisez des maisons', b.team); b.popWarned = true; }
+      if (!b.popWarned) { notify('Plus de place pour loger vos sujets : bâtissez des chaumières', b.team); b.popWarned = true; }
       return;
     }
     b.popWarned = false;
