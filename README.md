@@ -57,7 +57,7 @@ Raser **le château et tous les bâtiments** du Seigneur Rouge (en rouge) avant 
 | --- | --- | --- |
 | Château | 400 | Forme les paysans, reçoit l'or, +10 population |
 | Chaumière | 100 | +8 population |
-| Caserne | 150 | Lanciers et archers |
+| Caserne | 150 | Piquiers et archers |
 | Écurie | 200 | Chevaliers (nécessite une caserne) |
 | Atelier de siège | 250 | Trébuchets (nécessite une caserne) |
 | Tour d'archers | 125 | Défense automatique à distance |
