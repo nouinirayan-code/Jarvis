@@ -1,851 +1,280 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Interface, contrôles et boucle principale
+// Entrées, interface et boucle principale
 // ---------------------------------------------------------------------------
 
 const $ = id => document.getElementById(id);
 const canvas = $('game');
 const ctx = canvas.getContext('2d');
-const minimap = $('minimap');
-const mctx = minimap.getContext('2d');
+const mini = $('minimap');
+const mctx = mini.getContext('2d');
 
-const ui = {
-  hover: null,
-  drag: null,
-  pan: null,
-  placing: null, placeTx: 0, placeTy: 0,
-  mode: null,           // 'attack' : attente d'une cible pour l'attaque-mouvement
-  buildMenu: false,
-  markers: [],
-  mouse: { x: 0, y: 0, inside: false },
-  keys: {},
-  lastClick: { t: 0, id: 0 },
-  lastGroup: { key: null, t: 0 },
-  cardSig: '',
-  selSig: '',
-  speed: 1,
-  difficulty: 'normal',
-  running: false,
-  minimapDrag: false,
+const INPUT = {
+  up: false, down: false, left: false, right: false,
+  attack: false, dash: false,
+  screenX: 0, screenY: 0, mouseX: 0, mouseY: 0,
 };
+const UI = { buildType: null, running: false, hudTimer: 0, buildSig: '' };
 
-let viewW = 0, viewH = 0;
-const TOP_H = 40;
-
+let viewW = 0, viewH = 0, dpr = 1;
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  viewW = window.innerWidth;
-  viewH = window.innerHeight;
-  canvas.width = Math.floor(viewW * dpr);
-  canvas.height = Math.floor(viewH * dpr);
-  canvas.style.width = viewW + 'px';
-  canvas.style.height = viewH + 'px';
-  ctx.dpr = dpr;
+  dpr = window.devicePixelRatio || 1;
+  viewW = window.innerWidth; viewH = window.innerHeight;
+  canvas.width = Math.floor(viewW * dpr); canvas.height = Math.floor(viewH * dpr);
+  cam.zoom = viewW < 700 ? 0.8 : viewW < 1100 ? 1 : 1.2;
 }
 window.addEventListener('resize', resize);
 resize();
 
-function bottomH() { return $('bottombar').offsetHeight; }
+// Meilleur score (conservé dans le navigateur, si disponible)
+function loadBest() { try { return JSON.parse(localStorage.getItem('derniere-lueur-best')) || null; } catch (e) { return null; } }
+function saveBest(b) { try { localStorage.setItem('derniere-lueur-best', JSON.stringify(b)); } catch (e) { /* stockage indisponible */ } }
+function showBest() {
+  const b = loadBest();
+  $('best').textContent = b ? `Record : ${b.nights} nuit${b.nights > 1 ? 's' : ''} survécue${b.nights > 1 ? 's' : ''} · ${b.kills} ombres vaincues` : '';
+}
+showBest();
 
-// Démarrage -------------------------------------------------------------------
+// Partie -------------------------------------------------------------------------
 
-function startGame() {
-  const typed = $('heroName').value.trim();
-  newGame(ui.difficulty, undefined, ui.heroKey, typed || null);
-  aiReset();
-  minimapTerrain = null;
-  buildTerrainCanvas();
-  ui.placing = null; ui.mode = null; ui.buildMenu = false; ui.markers = [];
-  ui.cardSig = ''; ui.selSig = '';
-  const hq = G.buildings.find(b => b.team === PLAYER);
-  centerOn(hq.x, hq.y);
-  const hero = heroOf(PLAYER);
-  if (hero) setSelection([hero]);
-  const info = G.heroes[PLAYER].info;
-  $('avImg').src = portraitURL(info.look, PLAYER, 96);
-  $('avCryImg').src = commandIconURL('warcry', 24);
-  $('elImg').src = portraitURL(ENEMY_HERO.look, ENEMY, 64);
-  $('elName').textContent = `${ENEMY_HERO.name}, ${ENEMY_HERO.title}`;
-  $('menu').classList.add('hidden');
-  $('avatar').classList.remove('hidden');
-  $('enemyLord').classList.remove('hidden');
-  $('endScreen').classList.add('hidden');
-  $('pauseScreen').classList.add('hidden');
-  ui.running = true;
-  notify(`${info.title} ${info.name}, levez votre armée et abattez le château de ${ENEMY_HERO.name} !`);
+function start() {
+  newGame();
+  buildGround();
+  miniBase = null;
+  UI.buildType = null; UI.buildSig = '';
+  cam.x = G.player.x - viewW / 2 / cam.zoom; cam.y = G.player.y - viewH / 2 / cam.zoom;
+  for (const id of ['menu', 'gameover', 'pause', 'upgrades']) $(id).classList.add('hidden');
+  $('hud').classList.remove('hidden');
+  UI.running = true;
+  buildBuildBar();
 }
 
-// Choix de l'avatar dans le menu
-ui.heroKey = 'roi';
-function buildHeroChoice() {
-  const el = $('heroChoice');
-  el.innerHTML = Object.entries(HEROES).map(([key, h]) => `
-    <button class="hero-card${key === ui.heroKey ? ' active' : ''}" data-hero="${key}">
-      <img src="${portraitURL(h.look, PLAYER, 96)}" alt="">
-      <b>${h.title}</b>
-      <span class="hc-stats">PV ${h.hp} · Dégâts ${h.dmg} · ${h.range > 20 ? 'Distance' : 'Mêlée'}</span>
-      <span class="hc-desc">${h.desc}</span>
-    </button>`).join('');
-  $('heroName').placeholder = HEROES[ui.heroKey].name;
-}
-$('heroChoice').addEventListener('click', e => {
-  const card = e.target.closest('.hero-card');
-  if (!card) return;
-  ui.heroKey = card.dataset.hero;
-  buildHeroChoice();
-});
-buildHeroChoice();
-
-$('avatar').addEventListener('click', e => {
-  if (!G || e.target.closest('#avCry')) return;
-  const hero = heroOf(PLAYER);
-  if (!hero) return;
-  if (e.detail >= 2) centerOn(hero.x, hero.y);
-  setSelection([hero]);
-});
-$('avCry').addEventListener('click', () => { if (G && !G.paused) warCry(PLAYER); });
-$('enemyLord').addEventListener('click', () => {
-  const lord = heroOf(ENEMY);
-  if (lord && isVisibleToPlayer(lord)) { centerOn(lord.x, lord.y); setSelection([lord]); }
-});
-
-function centerOn(x, y) {
-  cam.x = x - viewW / 2 / cam.zoom;
-  cam.y = y - (viewH - bottomH() + TOP_H) / 2 / cam.zoom;
-  clampCamera(viewW, viewH);
-}
-
-document.querySelectorAll('#difficulty button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#difficulty button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    ui.difficulty = btn.dataset.diff;
-  });
-});
-$('startBtn').addEventListener('click', startGame);
-$('againBtn').addEventListener('click', () => {
-  $('endScreen').classList.add('hidden');
-  $('menu').classList.remove('hidden');
-  ui.running = false;
-});
-$('pauseBtn').addEventListener('click', togglePause);
+$('startBtn').addEventListener('click', start);
+$('againBtn').addEventListener('click', start);
+$('restartBtn').addEventListener('click', start);
 $('resumeBtn').addEventListener('click', togglePause);
-$('quitBtn').addEventListener('click', () => {
-  G.over = 'defeat';
-  G.paused = false;
-  $('pauseScreen').classList.add('hidden');
-});
-$('speedBtn').addEventListener('click', () => {
-  ui.speed = ui.speed === 1 ? 1.5 : ui.speed === 1.5 ? 2 : 1;
-  $('speedBtn').textContent = 'Vitesse x' + ui.speed;
-});
-$('idleBtn').addEventListener('click', selectIdleWorker);
+$('upClose').addEventListener('click', closeUpgrades);
 
 function togglePause() {
   if (!G || G.over) return;
+  if (!$('upgrades').classList.contains('hidden')) { closeUpgrades(); return; }
   G.paused = !G.paused;
-  $('pauseScreen').classList.toggle('hidden', !G.paused);
+  $('pause').classList.toggle('hidden', !G.paused);
 }
 
-// Sélection -------------------------------------------------------------------
-
-function setSelection(list) {
-  G.selection = list;
-  ui.buildMenu = false;
-  ui.mode = null;
-  ui.placing = null;
+function gameOver() {
+  UI.running = false;
+  const s = G.stats;
+  const best = loadBest();
+  const isRecord = !best || s.nightsSurvived > best.nights || (s.nightsSurvived === best.nights && s.kills > best.kills);
+  if (isRecord) saveBest({ nights: s.nightsSurvived, kills: s.kills });
+  $('goReason').textContent = G.over.reason;
+  const m = Math.floor(G.time / 60), sec = Math.floor(G.time % 60);
+  $('goStats').innerHTML = `
+    <div>Nuits survécues <b>${s.nightsSurvived}</b></div><div>Ombres vaincues <b>${s.kills}</b></div>
+    <div>Braises récoltées <b>${s.embers}</b></div><div>Constructions <b>${s.built}</b></div>
+    <div>Temps <b>${m} min ${sec} s</b></div><div>Améliorations <b>${Object.values(G.upgrades).reduce((a, b) => a + b, 0)}</b></div>`;
+  $('goBest').textContent = isRecord ? '✦ Nouveau record ! ✦' : `Record : ${best.nights} nuits · ${best.kills} ombres`;
+  $('gameover').classList.remove('hidden');
+  $('hud').classList.add('hidden');
+  showBest();
 }
 
-function pickEntity(wx, wy) {
-  let best = null, bestD = Infinity;
-  for (const u of G.units) {
-    if (!isVisibleToPlayer(u)) continue;
-    const d = Math.hypot(u.x - wx, u.y - wy);
-    if (d <= u.radius + 5 && d < bestD) { bestD = d; best = u; }
-  }
-  if (best) return best;
-  const inRect = e => wx >= e.tx * TILE && wx < (e.tx + e.tw) * TILE && wy >= e.ty * TILE && wy < (e.ty + e.th) * TILE;
-  for (const b of G.buildings) {
-    if (b.team !== PLAYER && !b.seen) continue;
-    if (inRect(b)) return b;
-  }
-  for (const m of G.mines) {
-    if (G.explored[tileIdx(m.tx, m.ty)] && inRect(m)) return m;
-  }
-  return null;
+// Améliorations -----------------------------------------------------------------
+
+function nearHearth() { return Math.hypot(G.player.x - HEARTH_X, G.player.y - HEARTH_Y) < 140; }
+
+function openUpgrades() {
+  if (!nearHearth()) { message('Approchez-vous du foyer pour les améliorations.'); return; }
+  G.paused = true;
+  renderUpgrades();
+  $('upgrades').classList.remove('hidden');
+}
+function closeUpgrades() {
+  $('upgrades').classList.add('hidden');
+  if (G) G.paused = false;
+}
+function renderUpgrades() {
+  $('upEmbers').textContent = G.res.ember;
+  $('upList').innerHTML = Object.entries(UPGRADES).map(([key, u], i) => {
+    const lv = G.upgrades[key];
+    const maxed = lv >= u.max;
+    const cost = upgradeCost(key);
+    return `<div class="up"><div class="info"><div class="name">${i + 1}. ${u.name}</div><div class="desc">${u.desc}</div>
+      <div class="pips">${'◆'.repeat(lv)}${'◇'.repeat(u.max - lv)}</div></div>
+      <button data-up="${key}" ${maxed || G.res.ember < cost ? 'disabled' : ''}>${maxed ? 'Maximum' : cost + ' braises'}</button></div>`;
+  }).join('');
+}
+$('upList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-up]');
+  if (!b) return;
+  buyUpgrade(b.dataset.up);
+  renderUpgrades();
+});
+
+// Barre de construction -------------------------------------------------------------
+
+function buildingIcon(type) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 88;
+  const x = c.getContext('2d');
+  x.scale(2, 2);
+  const def = BUILD_TYPES[type];
+  x.translate(22 - TILE / 2, 26 - TILE / 2);
+  drawBuilding(x, { type, def, x: TILE / 2, y: TILE / 2, hp: 1, maxHp: 1, built: 1, hitFlash: 0, aim: -0.6, cd: 0 }, 1.3);
+  return c;
 }
 
-function boxSelect(x0, y0, x1, y1, add) {
-  const a = screenToWorld(Math.min(x0, x1), Math.min(y0, y1));
-  const b = screenToWorld(Math.max(x0, x1), Math.max(y0, y1));
-  let list = G.units.filter(u => u.team === PLAYER && u.x + u.radius >= a.x && u.x - u.radius <= b.x && u.y + u.radius >= a.y && u.y - u.radius <= b.y);
-  // Préférer les unités militaires si la sélection est mixte
-  const military = list.filter(u => u.type !== 'worker');
-  if (military.length && military.length < list.length && !add) list = military;
-  if (!list.length) {
-    list = G.buildings.filter(bd => bd.team === PLAYER && bd.x >= a.x && bd.x <= b.x && bd.y >= a.y && bd.y <= b.y);
-    if (list.length) list = [list[0]];
-  }
-  if (add) {
-    const set = new Set(G.selection.filter(e => e.team === PLAYER && e.kind === 'unit'));
-    for (const u of list) if (u.kind === 'unit') set.add(u);
-    setSelection([...set]);
-  } else {
-    setSelection(list);
-  }
-}
-
-function clickSelect(wx, wy, add, dbl) {
-  const e = pickEntity(wx, wy);
-  if (!e) { if (!add) setSelection([]); return; }
-  if (dbl && e.team === PLAYER) {
-    // Tous les éléments du même type visibles à l'écran
-    const a = screenToWorld(0, TOP_H), b = screenToWorld(viewW, viewH - bottomH());
-    const list = (e.kind === 'unit' ? G.units : G.buildings).filter(o => o.team === PLAYER && o.type === e.type &&
-      o.x >= a.x && o.x <= b.x && o.y >= a.y && o.y <= b.y);
-    setSelection(list);
-    return;
-  }
-  if (add && e.team === PLAYER && e.kind === 'unit' && G.selection.every(s => s.kind === 'unit' && s.team === PLAYER)) {
-    const i = G.selection.indexOf(e);
-    const next = G.selection.slice();
-    if (i >= 0) next.splice(i, 1); else next.push(e);
-    setSelection(next);
-    return;
-  }
-  setSelection([e]);
-}
-
-function ownSelectedUnits() { return G.selection.filter(e => e.kind === 'unit' && e.team === PLAYER); }
-function ownSelectedBuildings() { return G.selection.filter(e => e.kind === 'building' && e.team === PLAYER); }
-
-function selectIdleWorker() {
-  if (!G) return;
-  const idle = G.units.filter(u => u.team === PLAYER && u.type === 'worker' && !u.order);
-  if (!idle.length) return;
-  ui.idleIndex = ((ui.idleIndex || 0) + 1) % idle.length;
-  const w = idle[ui.idleIndex];
-  setSelection([w]);
-  centerOn(w.x, w.y);
-}
-
-// Ordres ------------------------------------------------------------------------
-
-function addMarker(x, y, color) { ui.markers.push({ x, y, color, t: 0 }); }
-
-function smartCommand(wx, wy) {
-  const units = ownSelectedUnits();
-  const target = pickEntity(wx, wy);
-  if (units.length) {
-    if (target && target.team === ENEMY) {
-      commandAttack(units, target);
-      addMarker(target.x, target.y, '#f87171');
-      return;
-    }
-    if (target && target.kind === 'mine') {
-      commandHarvest(units, target);
-      addMarker(target.x, target.y, '#facc15');
-      return;
-    }
-    if (target && target.team === PLAYER && target.kind === 'building') {
-      const workers = units.filter(u => u.type === 'worker');
-      if (!target.complete && workers.length) {
-        commandBuild(workers, target);
-        const others = units.filter(u => u.type !== 'worker');
-        if (others.length) commandMove(others, wx, wy + target.radius + 30);
-        addMarker(target.x, target.y, '#38bdf8');
-        return;
-      }
-      if (target.def.dropoff && workers.some(w => w.carry > 0)) {
-        for (const w of workers) if (w.carry > 0) issueOrder(w, { type: 'return', mine: w.lastMine });
-        addMarker(target.x, target.y, '#facc15');
-        return;
-      }
-    }
-    commandMove(units, wx, wy, false);
-    addMarker(wx, wy, '#4ade80');
-    return;
-  }
-  const blds = ownSelectedBuildings().filter(b => b.def.trains);
-  if (blds.length) {
-    for (const b of blds) b.rally = { x: wx, y: wy, mine: target && target.kind === 'mine' ? target : null };
-    addMarker(wx, wy, '#e2e8f0');
-  }
-}
-
-function startAttackMode() {
-  if (!ownSelectedUnits().length) return;
-  ui.mode = 'attack';
-  ui.placing = null;
-}
-
-function startPlacing(type) {
-  const def = BUILDING_TYPES[type];
-  if (def.requires && !hasBuilding(PLAYER, def.requires, true)) {
-    notify(`Nécessite : ${BUILDING_TYPES[def.requires].name}`);
-    return;
-  }
-  if (G.teams[PLAYER].gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or"); return; }
-  ui.placing = type;
-  ui.mode = null;
-}
-
-function placeBuilding(shift) {
-  const workers = ownSelectedUnits().filter(u => u.type === 'worker');
-  if (!workers.length) { ui.placing = null; return; }
-  // Un seul ouvrier (le plus proche) construit ; les autres continuent leurs tâches.
-  const def = BUILDING_TYPES[ui.placing];
-  const cx = (ui.placeTx + def.w / 2) * TILE, cy = (ui.placeTy + def.h / 2) * TILE;
-  // En pose multiple (Maj), les paysans déjà sur un chantier y restent et enchaîneront ensuite.
-  const pool = shift ? workers.filter(w => !w.order || w.order.type !== 'build') : workers;
-  const builders = pool.length <= 3 ? pool : pool.slice().sort((a, b) =>
-    Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy)).slice(0, 3);
-  const b = tryPlaceBuilding(PLAYER, ui.placing, ui.placeTx, ui.placeTy, builders);
-  if (b) {
-    addMarker(b.x, b.y, '#38bdf8');
-    if (!shift || G.teams[PLAYER].gold < def.cost) { ui.placing = null; ui.buildMenu = false; }
-  }
-}
-
-// Carte de commandes -----------------------------------------------------------
-
-function commandCard() {
-  const btns = [];
-  if (!G) return btns;
-  if (ui.placing || ui.mode) {
-    btns.push({ id: 'cancel', label: 'Annuler', key: 'ESCAPE', keyLabel: 'Échap', desc: "Annuler l'action en cours.", action: cancelAction });
-    return btns;
-  }
-  const units = ownSelectedUnits();
-  const blds = ownSelectedBuildings();
-  if (units.length) {
-    const workers = units.filter(u => u.type === 'worker');
-    if (ui.buildMenu && workers.length) {
-      for (const [type, key] of BUILD_ORDER_KEYS) {
-        const def = BUILDING_TYPES[type];
-        const locked = def.requires && !hasBuilding(PLAYER, def.requires, true);
-        btns.push({
-          id: 'b_' + type, label: def.name, key, cost: def.cost,
-          desc: def.desc + (locked ? `<br><i>Nécessite : ${BUILDING_TYPES[def.requires].name}</i>` : ''),
-          disabled: locked || G.teams[PLAYER].gold < def.cost,
-          action: () => startPlacing(type),
-        });
-      }
-      btns.push({ id: 'back', label: 'Retour', key: 'ESCAPE', keyLabel: 'Échap', desc: 'Revenir aux ordres.', action: () => { ui.buildMenu = false; } });
-      return btns;
-    }
-    const hero = units.find(u => u.isHero);
-    if (hero) {
-      const cd = Math.ceil(G.heroes[PLAYER].cryReadyAt - G.time);
-      btns.push({
-        id: 'warcry', label: 'Cri de guerre', key: 'C',
-        desc: `Galvanise les troupes proches : +30 % de dégâts et +35 % de vitesse pendant ${WARCRY.duration} s.` + (cd > 0 ? `<br><i>Disponible dans ${cd} s</i>` : ''),
-        disabled: cd > 0, action: () => warCry(PLAYER),
-      });
-    }
-    btns.push({ id: 'atk', label: 'Attaquer', key: 'A', desc: "Attaque-mouvement : se déplacer en attaquant tout ennemi rencontré. Cliquez sur une cible ou un point.", action: startAttackMode });
-    btns.push({ id: 'stop', label: 'Stop', key: 'S', desc: 'Arrêter toute action.', action: () => commandStop(units) });
-    btns.push({ id: 'hold', label: 'Tenir position', key: 'H', desc: "Rester sur place et n'attaquer que les ennemis à portée.", action: () => commandHold(units) });
-    if (workers.length) {
-      btns.push({ id: 'build', label: 'Construire', key: 'B', desc: 'Ouvrir le menu de construction.', action: () => { ui.buildMenu = true; } });
-      btns.push({
-        id: 'gather', label: 'Récolter', key: 'G', desc: "Envoyer les paysans sélectionnés à la mine d'or la plus proche.",
-        action: () => {
-          const m = nearestMine(workers[0].x, workers[0].y);
-          if (m) commandHarvest(workers, m);
-        },
-      });
-    }
-    return btns;
-  }
-  if (blds.length) {
-    const b = blds[0];
-    if (!b.complete) {
-      btns.push({
-        id: 'cancelb', label: 'Annuler chantier', key: 'X', desc: 'Annuler la construction (75 % du coût remboursé).',
-        action: () => {
-          G.teams[PLAYER].gold += Math.floor(b.def.cost * 0.75);
-          kill(b, null);
-          G.teams[PLAYER].stats.buildingsLost--;
-        },
-      });
-      return btns;
-    }
-    (b.def.trains || []).forEach((type, i) => {
-      const def = UNIT_TYPES[type];
-      btns.push({
-        id: 't_' + type, label: def.name, key: TRAIN_KEYS[i], cost: def.cost,
-        desc: `${def.desc}<br>PV ${def.hp} · Dégâts ${def.dmg} · Armure ${def.armor} · Pop ${def.pop} · ${def.time}s`,
-        disabled: G.teams[PLAYER].gold < def.cost,
-        action: () => {
-          // Répartir entre les bâtiments du même type sélectionnés
-          const same = blds.filter(o => o.type === b.type && o.complete).sort((x, y) => x.queue.length - y.queue.length);
-          queueTraining(same[0], type);
-        },
-      });
-    });
-  }
-  return btns;
-}
-
-function cancelAction() {
-  if (ui.placing) { ui.placing = null; return; }
-  if (ui.mode) { ui.mode = null; return; }
-  if (ui.buildMenu) { ui.buildMenu = false; return; }
-  setSelection([]);
-}
-
-function refreshCommandCard() {
-  const btns = commandCard();
-  const sig = btns.map(b => b.id + (b.disabled ? 0 : 1)).join('|') + (ui.mode || '') + (ui.placing || '');
-  ui.currentButtons = btns;
-  if (sig === ui.cardSig) return;
-  ui.cardSig = sig;
-  const el = $('commands');
-  el.innerHTML = '';
-  btns.forEach((b, i) => {
-    const d = document.createElement('button');
-    d.className = 'cmd' + (b.disabled ? ' disabled' : '') + ((ui.mode === 'attack' && b.id === 'cancel') ? ' active' : '');
-    const icon = b.id.startsWith('b_') ? entityIconURL('building', b.id.slice(2), PLAYER, 44)
-      : b.id.startsWith('t_') ? entityIconURL('unit', b.id.slice(2), PLAYER, 44)
-      : commandIconURL(b.id, 44);
-    d.innerHTML = `<img src="${icon}" alt=""><span class="key">${b.keyLabel || b.key}</span><span class="lbl">${b.label}</span>` +
-      (b.cost ? `<span class="cost">${b.cost}</span>` : '');
-    d.dataset.index = i;
-    el.appendChild(d);
+function buildBuildBar() {
+  const bar = $('buildBar');
+  bar.innerHTML = '';
+  BUILD_ORDER.forEach(type => {
+    const def = BUILD_TYPES[type];
+    const d = document.createElement('div');
+    d.className = 'slot';
+    d.dataset.type = type;
+    d.title = `${def.name} — ${costText(def.cost)}\n${def.desc}`;
+    d.appendChild(buildingIcon(type));
+    d.insertAdjacentHTML('afterbegin', `<span class="k">${def.key}</span>`);
+    d.insertAdjacentHTML('beforeend', `<span class="c">${Object.entries(def.cost).map(([k, v]) => v + ({ wood: '🪵', stone: '🪨', ember: '🔥' }[k])).join(' ')}</span>`);
+    d.addEventListener('mousedown', e => { e.stopPropagation(); selectBuild(type); });
+    bar.appendChild(d);
   });
 }
 
-$('commands').addEventListener('pointerdown', e => {
-  const btn = e.target.closest('.cmd');
-  if (!btn || e.button !== 0) return;
-  e.preventDefault();
-  const b = ui.currentButtons[+btn.dataset.index];
-  if (b) b.action();
-  ui.cardSig = '';
-});
-$('commands').addEventListener('mouseover', e => {
-  const btn = e.target.closest('.cmd');
-  if (!btn) return hideTooltip();
-  const b = ui.currentButtons[+btn.dataset.index];
-  if (!b) return;
-  showTooltip(`<b>${b.label}</b> <span style="color:#a8a29e">[${b.keyLabel || b.key}]</span>` +
-    (b.cost ? ` — <span style="color:#facc15">${b.cost} or</span>` : '') + `<br>${b.desc || ''}`, btn);
-});
-$('commands').addEventListener('mouseleave', hideTooltip);
-
-function showTooltip(html, anchor) {
-  const t = $('tooltip');
-  t.innerHTML = html;
-  t.classList.remove('hidden');
-  const r = anchor.getBoundingClientRect();
-  t.style.left = Math.max(8, Math.min(window.innerWidth - 270, r.left - 40)) + 'px';
-  t.style.top = (r.top - t.offsetHeight - 8) + 'px';
-}
-function hideTooltip() { $('tooltip').classList.add('hidden'); }
-
-// Panneau de sélection -----------------------------------------------------------
-
-function badgeStyle(e) {
-  const c = e.team >= 0 ? TEAM_COLORS[e.team] : '#a16207';
-  return `background:${c};`;
+function selectBuild(type) {
+  UI.buildType = UI.buildType === type ? null : type;
+  INPUT.attack = false;
 }
 
-function hpColor(f) { return f > 0.6 ? '#4ade80' : f > 0.3 ? '#facc15' : '#ef4444'; }
+// Entrées ------------------------------------------------------------------------
 
-function refreshSelectionPanel() {
-  const el = $('selection');
-  const sel = G.selection;
-  if (!sel.length) {
-    if (ui.selSig !== 'none') {
-      ui.selSig = 'none';
-      el.innerHTML = '<div class="muted empty-sel"><b>Aucune sélection.</b><br>Clic gauche pour sélectionner, clic droit pour donner un ordre.<br><kbd>F</kbd> sélectionne votre seigneur.</div>';
-    }
-    return;
-  }
-  let html;
-  if (sel.length === 1) {
-    const e = sel[0];
-    if (e.kind === 'mine') {
-      html = `<div class="sel-single"><img class="portrait" src="${entityIconURL('mine', 'mine', -1, 72)}" alt=""><div class="sel-info">
-        <h3>Mine d'or</h3><div class="desc">Clic droit avec des paysans pour récolter.</div>
-        <div>Or restant : <b style="color:#facc15">${Math.floor(e.gold)}</b> / ${e.maxGold}</div></div></div>`;
-    } else {
-      const def = e.def;
-      const f = e.hp / e.maxHp;
-      let extra = '';
-      if (e.kind === 'unit') {
-        const state = unitStateLabel(e);
-        const hs = e.isHero ? G.heroes[e.team] : null;
-        extra = (hs ? `<div class="hero-line">${hs.info.title} · Niveau <b>${hs.level}</b> · ${hs.kills} victoires · Aura +${Math.round(def.aura * 100)} %</div>
-          <div class="bar xp small"><div style="width:${hs.level >= HERO_MAX_LEVEL ? 100 : hs.xp / heroXpNeeded(hs.level) * 100}%"></div></div>` : '') +
-          `<div class="stats">
-          <span>Dégâts</span><b>${def.dmg}${def.splash ? ' (zone)' : ''}</b>
-          <span>Armure</span><b>${def.armor}</b>
-          <span>Portée</span><b>${def.range > 20 ? def.range : 'mêlée'}</b>
-          <span>Vitesse</span><b>${def.speed}</b></div>
-          <div style="margin-top:4px;color:#d6d3d1">${state}${e.carry ? ' · transporte ' + e.carry + ' or' : ''}</div>`;
-      } else {
-        if (!e.complete) {
-          extra = `<div>Construction : <b>${Math.floor(e.progress * 100)} %</b></div>`;
-        } else {
-          const parts = [];
-          if (def.dmg) parts.push(`<span>Dégâts</span><b>${def.dmg}</b><span>Portée</span><b>${def.range}</b>`);
-          parts.push(`<span>Armure</span><b>${def.armor}</b>`);
-          if (def.pop) parts.push(`<span>Population</span><b>+${def.pop}</b>`);
-          extra = `<div class="stats">${parts.join('')}</div>`;
-          if (e.team === PLAYER && def.trains) {
-            extra += '<div class="queue">' + (e.queue.length ? '' : '<span class="muted">File vide — clic droit sur la carte pour le point de ralliement</span>');
-            e.queue.forEach((q, i) => {
-              const ud = UNIT_TYPES[q.type];
-              extra += `<div class="qitem" data-q="${i}" title="Annuler ${ud.name}"><img src="${entityIconURL('unit', q.type, e.team, 34)}" alt="">` +
-                (i === 0 ? `<div class="prog" style="width:${(q.t / ud.time * 100).toFixed(0)}%"></div>` : '') + '</div>';
-            });
-            extra += '</div>';
-          }
-        }
-      }
-      const icon = entityIconURL(e.kind, e.type, e.team, 72, def.look);
-      html = `<div class="sel-single"><img class="portrait${e.isHero ? ' hero' : ''}" src="${icon}" alt=""><div class="sel-info">
-        <h3>${def.name}${e.team === ENEMY ? ' <span style="color:#f87171;font-size:12px">(Seigneur Rouge)</span>' : ''}</h3>
-        <div class="hpbar"><div style="width:${f * 100}%;background:${hpColor(f)}"></div></div>
-        <div class="muted">PV ${Math.ceil(e.hp)} / ${e.maxHp}</div>
-        ${extra}</div></div>`;
-    }
-  } else {
-    html = '<div class="sel-multi">' + sel.map((e, i) => {
-      const f = e.hp / e.maxHp;
-      return `<div class="uicon${e.isHero ? ' hero' : ''}" data-i="${i}" title="${e.def.name}"><img src="${entityIconURL(e.kind, e.type, e.team, 40, e.def.look)}" alt="">
-        <div class="mini"><div style="width:${f * 100}%;background:${hpColor(f)}"></div></div></div>`;
-    }).join('') + '</div>';
-  }
-  if (html !== ui.selSig) {
-    ui.selSig = html;
-    el.innerHTML = html;
-  }
-}
-
-function unitStateLabel(u) {
-  const o = u.order;
-  if (!o) return 'Inactif';
-  switch (o.type) {
-    case 'move': return 'En déplacement';
-    case 'attackMove': return 'Attaque-mouvement';
-    case 'attack': return 'Attaque';
-    case 'hold': return 'Tient la position';
-    case 'harvest': return 'Récolte';
-    case 'return': return "Rapporte l'or";
-    case 'build': return 'Construit';
-  }
-  return '';
-}
-
-$('selection').addEventListener('pointerdown', e => {
-  const q = e.target.closest('.qitem');
-  if (q) {
-    const b = G.selection[0];
-    if (b && b.kind === 'building' && b.team === PLAYER) cancelTraining(b, +q.dataset.q);
-    return;
-  }
-  const u = e.target.closest('.uicon');
-  if (u) {
-    const ent = G.selection[+u.dataset.i];
-    if (!ent) return;
-    if (e.shiftKey) setSelection(G.selection.filter(s => s !== ent));
-    else if (e.ctrlKey) setSelection(G.selection.filter(s => s.type === ent.type));
-    else setSelection([ent]);
-  }
-});
-
-// Souris sur la carte --------------------------------------------------------------
-
-canvas.addEventListener('contextmenu', e => e.preventDefault());
-minimap.addEventListener('contextmenu', e => e.preventDefault());
-
-canvas.addEventListener('mousedown', e => {
-  if (!ui.running || !G || G.over) return;
-  const w = screenToWorld(e.offsetX, e.offsetY);
-  if (e.button === 1) {
-    e.preventDefault();
-    ui.pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
-    return;
-  }
-  if (G.paused) return;
-  if (e.button === 2) {
-    if (ui.placing || ui.mode) { ui.placing = null; ui.mode = null; return; }
-    smartCommand(w.x, w.y);
-    return;
-  }
-  if (e.button !== 0) return;
-  if (ui.placing) { placeBuilding(e.shiftKey); return; }
-  if (ui.mode === 'attack') {
-    const units = ownSelectedUnits();
-    const t = pickEntity(w.x, w.y);
-    if (t && t.team === ENEMY) { commandAttack(units, t); addMarker(t.x, t.y, '#f87171'); }
-    else { commandMove(units, w.x, w.y, true); addMarker(w.x, w.y, '#f87171'); }
-    if (!e.shiftKey) ui.mode = null;
-    return;
-  }
-  ui.drag = { sx: e.offsetX, sy: e.offsetY, cx: e.offsetX, cy: e.offsetY, active: false, shift: e.shiftKey };
-});
-
-window.addEventListener('mousemove', e => {
-  const r = canvas.getBoundingClientRect();
-  ui.mouse.x = e.clientX - r.left;
-  ui.mouse.y = e.clientY - r.top;
-  ui.mouse.inWindow = true;
-  if (ui.pan) {
-    cam.x = ui.pan.cx - (e.clientX - ui.pan.x) / cam.zoom;
-    cam.y = ui.pan.cy - (e.clientY - ui.pan.y) / cam.zoom;
-    clampCamera(viewW, viewH);
-  }
-  if (ui.drag) {
-    ui.drag.cx = ui.mouse.x; ui.drag.cy = ui.mouse.y;
-    if (Math.abs(ui.drag.cx - ui.drag.sx) + Math.abs(ui.drag.cy - ui.drag.sy) > 6) ui.drag.active = true;
-  }
-});
-
-window.addEventListener('mouseup', e => {
-  if (e.button === 1) ui.pan = null;
-  if (e.button !== 0) return;
-  ui.minimapDrag = false;
-  if (!ui.drag || !G) return;
-  const d = ui.drag;
-  ui.drag = null;
-  if (d.active) {
-    boxSelect(d.sx, d.sy, d.cx, d.cy, d.shift);
-  } else {
-    const w = screenToWorld(d.sx, d.sy);
-    const now = performance.now();
-    const picked = pickEntity(w.x, w.y);
-    const dbl = picked && ui.lastClick.id === picked.id && now - ui.lastClick.t < 350;
-    ui.lastClick = { t: now, id: picked ? picked.id : 0 };
-    clickSelect(w.x, w.y, d.shift, dbl);
-  }
-});
-
-document.addEventListener('mouseleave', () => { ui.mouse.inWindow = false; });
-canvas.addEventListener('mouseenter', () => { ui.mouse.inside = true; });
-canvas.addEventListener('mouseleave', () => { ui.mouse.inside = false; });
-
-canvas.addEventListener('wheel', e => {
-  if (!ui.running) return;
-  e.preventDefault();
-  const before = screenToWorld(e.offsetX, e.offsetY);
-  cam.zoom = Math.max(0.5, Math.min(1.6, cam.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
-  cam.x = before.x - e.offsetX / cam.zoom;
-  cam.y = before.y - e.offsetY / cam.zoom;
-  clampCamera(viewW, viewH);
-}, { passive: false });
-
-// Mini-carte
-function minimapToWorld(e) {
-  const r = minimap.getBoundingClientRect();
-  return { x: (e.clientX - r.left) / r.width * WORLD_W, y: (e.clientY - r.top) / r.height * WORLD_H };
-}
-minimap.addEventListener('mousedown', e => {
-  if (!ui.running || !G) return;
-  const w = minimapToWorld(e);
-  if (e.button === 2) {
-    if (!G.paused) smartCommand(w.x, w.y);
-    return;
-  }
-  if (e.button === 0) {
-    if (ui.mode === 'attack') {
-      commandMove(ownSelectedUnits(), w.x, w.y, true);
-      ui.mode = null;
-      return;
-    }
-    ui.minimapDrag = true;
-    centerOn(w.x, w.y);
-  }
-});
-minimap.addEventListener('mousemove', e => {
-  if (ui.minimapDrag) { const w = minimapToWorld(e); centerOn(w.x, w.y); }
-});
-
-// Clavier ----------------------------------------------------------------------------
+const MOVE_KEYS = {
+  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+};
 
 window.addEventListener('keydown', e => {
-  ui.keys[e.key] = true;
-  if (!ui.running || !G || G.over) return;
-  const key = e.key.toUpperCase();
-
-  if (key === 'P' || (key === 'ESCAPE' && G.paused)) { togglePause(); return; }
+  if (!UI.running) return;
+  if (MOVE_KEYS[e.code]) { INPUT[MOVE_KEYS[e.code]] = true; e.preventDefault(); return; }
+  const upOpen = !$('upgrades').classList.contains('hidden');
+  if (e.code === 'Escape') {
+    if (upOpen) closeUpgrades();
+    else if (UI.buildType) UI.buildType = null;
+    else togglePause();
+    return;
+  }
+  if (e.code === 'KeyP') { togglePause(); return; }
+  if (upOpen) {
+    if (e.code === 'KeyU') closeUpgrades();
+    const n = e.code.startsWith('Digit') ? +e.code.slice(5) : 0;
+    const key = Object.keys(UPGRADES)[n - 1];
+    if (key) { buyUpgrade(key); renderUpgrades(); }
+    return;
+  }
   if (G.paused) return;
-
-  // Groupes de contrôle
-  if (/^[1-9]$/.test(e.key) || /^Digit[1-9]$/.test(e.code)) {
-    const n = e.code.startsWith('Digit') ? e.code.slice(5) : e.key;
-    e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      G.groups[n] = ownSelectedUnits().length ? ownSelectedUnits() : ownSelectedBuildings();
-      notify(`Groupe ${n} créé (${G.groups[n].length})`);
-    } else if (G.groups[n] && G.groups[n].length) {
-      const now = performance.now();
-      setSelection(G.groups[n].slice());
-      if (ui.lastGroup.key === n && now - ui.lastGroup.t < 400) centerSelection();
-      ui.lastGroup = { key: n, t: now };
-    }
+  if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') { INPUT.dash = true; e.preventDefault(); return; }
+  if (e.code.startsWith('Digit') || e.code.startsWith('Numpad')) {
+    const n = +e.code.replace(/\D/g, '');
+    if (n >= 1 && n <= BUILD_ORDER.length) selectBuild(BUILD_ORDER[n - 1]);
     return;
   }
-  if (key === ' ') { e.preventDefault(); centerSelection(); return; }
-  if (key === '.' || key === ';') { selectIdleWorker(); return; }
-  if (key.startsWith('ARROW')) { e.preventDefault(); return; }
-
-  if (key === 'F') {
-    const hero = heroOf(PLAYER);
-    if (hero) {
-      const now = performance.now();
-      if (G.selection.length === 1 && G.selection[0] === hero && now - (ui.lastF || 0) < 500) centerOn(hero.x, hero.y);
-      ui.lastF = now;
-      setSelection([hero]);
-    }
-    return;
-  }
-  if (key === 'C' && !ui.placing) { warCry(PLAYER); ui.cardSig = ''; return; }
-
-  // Raccourcis de la carte de commandes
-  const btns = commandCard();
-  ui.currentButtons = btns;
-  const btn = btns.find(b => b.key === key);
-  if (btn) {
-    e.preventDefault();
-    if (!btn.disabled || btn.id.startsWith('b_') || btn.id.startsWith('t_')) btn.action();
-    ui.cardSig = '';
-    refreshCommandCard();
-    return;
-  }
-  if (key === 'ESCAPE') cancelAction();
+  if (e.code === 'KeyB') { UI.buildType = UI.buildType ? null : (UI.lastBuild || 'wall'); return; }
+  if (e.code === 'KeyF') { feedHearth(); return; }
+  if (e.code === 'KeyU') { openUpgrades(); return; }
+  if (e.code === 'KeyE') { if (!repairAt(INPUT.mouseX, INPUT.mouseY)) message('Visez une construction abîmée pour la réparer.'); return; }
+  if (e.code === 'KeyX') { demolishAt(INPUT.mouseX, INPUT.mouseY); return; }
 });
-window.addEventListener('keyup', e => { ui.keys[e.key] = false; });
-window.addEventListener('blur', () => { ui.keys = {}; ui.pan = null; ui.drag = null; });
+window.addEventListener('keyup', e => {
+  if (MOVE_KEYS[e.code]) INPUT[MOVE_KEYS[e.code]] = false;
+});
+window.addEventListener('blur', () => {
+  INPUT.up = INPUT.down = INPUT.left = INPUT.right = INPUT.attack = false;
+});
 
-function centerSelection() {
-  const s = G.selection.length ? G.selection : G.buildings.filter(b => b.team === PLAYER && b.type === 'hq');
-  if (!s.length) return;
-  let x = 0, y = 0;
-  for (const e of s) { x += e.x; y += e.y; }
-  centerOn(x / s.length, y / s.length);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousemove', e => { INPUT.screenX = e.clientX; INPUT.screenY = e.clientY; });
+canvas.addEventListener('mousedown', e => {
+  if (!UI.running || G.paused) return;
+  INPUT.screenX = e.clientX; INPUT.screenY = e.clientY;
+  if (e.button === 2) { UI.buildType = null; return; }
+  if (e.button !== 0) return;
+  if (UI.buildType) {
+    const w = screenToWorld(e.clientX, e.clientY);
+    if (tryBuild(UI.buildType, tileOf(w.x), tileOf(w.y))) UI.lastBuild = UI.buildType;
+    return;
+  }
+  INPUT.attack = true;
+});
+window.addEventListener('mouseup', e => { if (e.button === 0) INPUT.attack = false; });
+
+// HUD -----------------------------------------------------------------------------
+
+function setBar(id, frac) { $(id).style.width = Math.max(0, Math.min(1, frac)) * 100 + '%'; }
+
+function refreshHud() {
+  const p = G.player, h = G.hearth;
+  setBar('hpBar', p.hp / p.maxHp);
+  $('hpTxt').textContent = p.downT > 0 ? `Ranimé dans ${Math.ceil(p.downT)} s` : `${Math.ceil(p.hp)} / ${p.maxHp}`;
+  setBar('oilBar', p.oil / p.maxOil);
+  $('oilTxt').textContent = p.oil > 0 ? 'Huile de lanterne' : 'Lanterne vide : le froid vous ronge !';
+  setBar('dashBar', 1 - p.dashCd / PLAYER_DEF.dashCooldown);
+
+  const night = G.phase === 'night' || G.phase === 'dusk';
+  const label = { day: 'Jour', dusk: 'Crépuscule', night: 'Nuit', dawn: 'Aube' }[G.phase];
+  const num = G.phase === 'night' ? G.night : G.night + 1;
+  $('phaseName').textContent = `${label} ${G.phase === 'dusk' ? '' : num} · ${Math.ceil(phaseRemaining())} s`;
+  $('phaseName').classList.toggle('night', night);
+  const total = G.phase === 'day' ? DAY_LENGTH + DUSK_LENGTH : G.phase === 'night' ? nightLength() : G.phase === 'dusk' ? DUSK_LENGTH : 4;
+  setBar('phaseBar', phaseRemaining() / total);
+  $('phaseBar').classList.toggle('night', night);
+  setBar('fuelBar', h.fuel / HEARTH.maxFuel);
+  $('fuelTxt').textContent = `Flamme ${Math.ceil(h.fuel)} %`;
+  setBar('hearthBar', h.hp / h.maxHp);
+
+  const boss = G.enemies.find(e => e.def.boss);
+  $('bossBar').classList.toggle('hidden', !boss);
+  if (boss) setBar('bossFill', boss.hp / boss.maxHp);
+
+  $('rWood').textContent = G.res.wood;
+  $('rStone').textContent = G.res.stone;
+  $('rEmber').textContent = G.res.ember;
+
+  for (const s of document.querySelectorAll('.slot')) {
+    const type = s.dataset.type;
+    s.classList.toggle('active', UI.buildType === type);
+    s.classList.toggle('poor', !canAfford(BUILD_TYPES[type].cost));
+  }
+
+  let hint = '';
+  if (p.downT > 0) hint = 'La flamme vous ranime…';
+  else if (UI.buildType) hint = `${BUILD_TYPES[UI.buildType].name} : clic pour bâtir (zone éclairée) · clic droit pour annuler`;
+  else if (nearHearth()) hint = `F : nourrir la flamme (${G.res.ember ? '1 braise' : 'bois'}) · U : améliorations`;
+  else if (G.phase === 'day' && G.time < 25) hint = 'Frappez les arbres et les rochers pour récolter · 1 à 5 pour construire';
+  else if (G.phase === 'dusk') hint = 'La nuit tombe : revenez défendre le foyer !';
+  $('hint').textContent = hint;
+
+  $('messages').innerHTML = G.messages.map(m => `<div style="opacity:${Math.min(1, m.t)}">${m.text}</div><br>`).join('');
 }
 
-// Boucle principale ---------------------------------------------------------------
+// Boucle --------------------------------------------------------------------------
 
 let last = performance.now();
-let uiTimer = 0;
-
 function frame(now) {
-  const rawDt = Math.min(0.05, (now - last) / 1000);
+  const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-
-  if (ui.running && G) {
-    // Caméra
-    const speed = 700 / cam.zoom * rawDt;
-    if (ui.keys.ArrowLeft) cam.x -= speed;
-    if (ui.keys.ArrowRight) cam.x += speed;
-    if (ui.keys.ArrowUp) cam.y -= speed;
-    if (ui.keys.ArrowDown) cam.y += speed;
-    if (ui.mouse.inWindow && !ui.drag && !ui.pan && !ui.minimapDrag && document.hasFocus()) {
-      const m = 10;
-      if (ui.mouse.x < m) cam.x -= speed;
-      if (ui.mouse.x > viewW - m) cam.x += speed;
-      if (ui.mouse.y < m) cam.y -= speed;
-      if (ui.mouse.y > viewH - m) cam.y += speed;
-    }
-    clampCamera(viewW, viewH);
-
-    // Simulation (sous-pas pour la stabilité en vitesse accélérée)
-    const steps = Math.ceil(ui.speed);
-    for (let i = 0; i < steps; i++) update(rawDt * ui.speed / steps);
-
-    for (const m of ui.markers) m.t += rawDt;
-    ui.markers = ui.markers.filter(m => m.t < 0.6);
-
-    // Survol et placement
-    const w = screenToWorld(ui.mouse.x, ui.mouse.y);
-    ui.hover = ui.mouse.inside ? pickEntity(w.x, w.y) : null;
-    if (ui.placing) {
-      const def = BUILDING_TYPES[ui.placing];
-      ui.placeTx = Math.round(w.x / TILE - def.w / 2);
-      ui.placeTy = Math.round(w.y / TILE - def.h / 2);
-    }
-    canvas.classList.toggle('targeting', !!ui.mode);
-    canvas.style.cursor = ui.mode ? 'crosshair' : (ui.hover && ui.hover.team === ENEMY && ownSelectedUnits().length ? 'crosshair' : '');
-
-    // Rendu
-    render(ctx, viewW, viewH, ui, ctx.dpr || 1);
-    renderMinimap(mctx, minimap.width, minimap.height, viewW, viewH);
-
-    uiTimer -= rawDt;
-    if (uiTimer <= 0) {
-      uiTimer = 0.1;
-      refreshHud();
-    }
-
-    if (G.over) showEnd();
+  if (UI.running && G) {
+    const w = screenToWorld(INPUT.screenX, INPUT.screenY);
+    INPUT.mouseX = w.x; INPUT.mouseY = w.y;
+    update(dt);
+    updateCamera(dt, viewW, viewH);
+    render(ctx, viewW, viewH, dpr);
+    renderMinimap(mctx, mini.width, mini.height);
+    UI.hudTimer -= dt;
+    if (UI.hudTimer <= 0) { UI.hudTimer = 0.1; refreshHud(); }
+    if (G.over) gameOver();
   }
   requestAnimationFrame(frame);
 }
-
-function refreshHud() {
-  const t = G.teams[PLAYER];
-  $('gold').textContent = Math.floor(t.gold);
-  const pop = teamPop(PLAYER);
-  $('pop').textContent = `${pop.used}/${pop.cap}`;
-  $('pop').classList.toggle('full', pop.used >= pop.cap);
-  const idle = G.units.filter(u => u.team === PLAYER && u.type === 'worker' && !u.order).length;
-  $('idleCount').textContent = idle;
-  $('idleBtn').style.opacity = idle ? 1 : 0.5;
-  const s = Math.floor(G.time);
-  $('clock').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  $('messages').innerHTML = G.messages.map(m => `<div style="opacity:${Math.min(1, m.t)}">${m.text}</div>`).join('');
-  refreshAvatar();
-  refreshCommandCard();
-  refreshSelectionPanel();
-}
-
-function refreshAvatar() {
-  const h = G.heroes[PLAYER];
-  const u = heroOf(PLAYER);
-  $('avName').textContent = h.info.name;
-  $('avTitle').textContent = `${h.info.title} · Niveau ${h.level}`;
-  $('avLevel').textContent = h.level;
-  const f = u ? u.hp / u.maxHp : 0;
-  $('avHp').style.width = (f * 100) + '%';
-  $('avHp').style.background = hpColor(f);
-  $('avHpTxt').textContent = u ? `${Math.ceil(u.hp)} / ${u.maxHp}` : 'Tombé au combat';
-  $('avXp').style.width = (h.level >= HERO_MAX_LEVEL ? 100 : h.xp / heroXpNeeded(h.level) * 100) + '%';
-  $('avatar').classList.toggle('dead', !u);
-  $('avatar').classList.toggle('selected', !!u && G.selection.includes(u));
-  $('avDead').classList.toggle('hidden', !!u);
-  if (!u) $('avDead').textContent = Math.max(0, Math.ceil(h.respawnAt - G.time)) + ' s';
-  const cd = h.cryReadyAt - G.time;
-  $('avCry').disabled = !u || cd > 0;
-  $('avCryCd').style.width = cd > 0 ? (cd / WARCRY.cooldown * 100) + '%' : '0';
-  const e = G.heroes[ENEMY], lord = heroOf(ENEMY);
-  $('elState').textContent = lord ? `Niveau ${e.level}` + (isVisibleToPlayer(lord) ? ' · en vue !' : '') : `Tombé · retour dans ${Math.max(0, Math.ceil(e.respawnAt - G.time))} s`;
-  $('enemyLord').classList.toggle('dead', !lord);
-}
-
-function showEnd() {
-  const win = G.over === 'victory';
-  $('endTitle').textContent = win ? 'Victoire ! Le royaume est à vous' : 'Défaite… Votre château est tombé';
-  $('endTitle').style.color = win ? '#166534' : '#7a1f14';
-  const p = G.teams[PLAYER].stats, e = G.teams[ENEMY].stats;
-  const s = Math.floor(G.time);
-  const rows = [
-    ['Durée', `${Math.floor(s / 60)} min ${s % 60} s`, ''],
-    ['Or récolté', p.gathered, e.gathered],
-    ['Unités formées', p.trained, e.trained],
-    ['Unités ennemies tuées', p.killed, e.killed],
-    ['Unités perdues', p.lost, e.lost],
-    ['Bâtiments détruits', p.buildingsDestroyed, e.buildingsDestroyed],
-  ];
-  $('endStats').innerHTML = `<tr><th></th><th style="color:${TEAM_COLORS[0]}">Votre royaume</th><th style="color:${TEAM_COLORS[1]}">Seigneur Rouge</th></tr>` +
-    rows.map(r => `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
-  $('endScreen').classList.remove('hidden');
-  ui.running = false;
-}
-
 requestAnimationFrame(frame);

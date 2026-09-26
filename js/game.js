@@ -1,872 +1,763 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// État du jeu, entités, ordres, combat
+// État du jeu et simulation
 // ---------------------------------------------------------------------------
 
 let G = null;
 
-function newGame(difficulty, seed, heroKey, heroName) {
-  const diff = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
+function newGame(seed) {
   seed = seed || (Math.random() * 1e9) | 0;
+  const world = generateWorld(seed);
   G = {
-    difficulty,
-    diff,
     seed,
     time: 0,
+    phase: 'day', phaseT: 0, night: 0,
+    terrain: world.terrain,
+    grid: new Int32Array(MAP_W * MAP_H),
+    ents: new Map(),
     nextId: 1,
-    terrain: generateTerrain(seed),
-    occ: new Int32Array(MAP_W * MAP_H),
-    visible: new Uint8Array(MAP_W * MAP_H),
-    explored: new Uint8Array(MAP_W * MAP_H),
-    units: [],
-    buildings: [],
-    mines: [],
-    projectiles: [],
-    effects: [],
-    byId: new Map(),
-    teams: [
-      { gold: diff.startGold, gatherMult: 1, stats: newStats() },
-      { gold: diff.startGold, gatherMult: diff.gatherMult, stats: newStats() },
-    ],
-    selection: [],
-    groups: {},
-    messages: [],
-    over: null,
-    paused: false,
-    fogTimer: 0,
-    attackAlertTimer: 0,
-    heroes: [
-      newHeroState(Object.assign({}, HEROES[heroKey] || HEROES.roi, heroName ? { name: heroName } : {})),
-      newHeroState(ENEMY_HERO),
-    ],
+    nodes: [], depleted: [], buildings: [], enemies: [], projectiles: [], pickups: [],
+    particles: [], floaters: [], messages: [],
+    res: { wood: 10, stone: 4, ember: 0 },
+    upgrades: { blade: 0, heart: 0, lantern: 0, swift: 0, hearth: 0 },
+    stats: { kills: 0, built: 0, embers: 0, nightsSurvived: 0 },
+    spawnLeft: 0, spawnTimer: 0, bossPending: false,
+    flow: null, flowDirty: true,
+    over: null, paused: false,
+    lights: [],
   };
 
-  // Mines d'or (symétriques)
-  for (const m of MINE_SPOTS) {
-    addMine(m.x, m.y, m.gold);
-    addMine(mirrorX(m.x, MINE_W), mirrorY(m.y, MINE_H), m.gold);
-  }
+  const h = {
+    id: G.nextId++, kind: 'hearth', solid: true,
+    tx: HEARTH_TX, ty: HEARTH_TY, tw: 2, th: 2, x: HEARTH_X, y: HEARTH_Y, radius: TILE,
+    hp: HEARTH.hp, maxHp: HEARTH.hp, fuel: HEARTH.fuel, hitFlash: 0,
+  };
+  G.hearth = h;
+  G.ents.set(h.id, h);
+  for (let y = h.ty; y < h.ty + 2; y++) for (let x = h.tx; x < h.tx + 2; x++) G.grid[idx(x, y)] = h.id;
 
-  // Bases de départ
-  for (let team = 0; team < 2; team++) {
-    const b = BASE_TILES[team];
-    const hq = addBuilding('hq', team, b.x - 1, b.y - 1, true);
-    const dir = team === PLAYER ? 1 : -1;
-    for (let i = 0; i < 5; i++) {
-      const u = addUnit('worker', team, hq.x + dir * (70 + (i % 3) * 22), hq.y - dir * (30 - Math.floor(i / 3) * 40));
-      unstick(u);
-    }
-    addUnit('spearman', team, hq.x - dir * 60, hq.y - dir * 60);
-    addUnit('archer', team, hq.x - dir * 30, hq.y - dir * 75);
-    spawnHero(team);
-  }
-  for (const u of G.units) {
-    unstick(u);
-    if (u.type === 'worker') issueOrder(u, { type: 'harvest', mine: nearestMine(u.x, u.y) });
-  }
-  updateFog();
+  for (const n of world.nodes) addNode(n.type, n.tx, n.ty);
+
+  G.player = {
+    x: HEARTH_X, y: HEARTH_Y + 80, radius: PLAYER_DEF.radius,
+    hp: PLAYER_DEF.hp, maxHp: PLAYER_DEF.hp,
+    oil: PLAYER_DEF.oil, maxOil: PLAYER_DEF.oil,
+    facing: -Math.PI / 2, attackCd: 0, swingT: 0,
+    dashT: 0, dashCd: 0, dashDx: 0, dashDy: 0,
+    invuln: 0, hitFlash: 0, downT: 0, walkT: 0,
+  };
+  computeFlowField();
+  message('Le dernier foyer brûle encore. Rassemblez du bois et de la pierre avant la nuit.');
   return G;
 }
 
-function newStats() {
-  return { trained: 0, lost: 0, killed: 0, gathered: 0, buildingsLost: 0, buildingsDestroyed: 0 };
-}
+// Entités ---------------------------------------------------------------------
 
-// Création des entités -------------------------------------------------------
-
-function addUnit(type, team, x, y, customDef) {
-  const def = customDef || UNIT_TYPES[type];
-  const u = {
-    id: G.nextId++, kind: 'unit', type, team, def,
-    x, y, radius: def.radius,
-    hp: def.hp, maxHp: def.hp,
-    order: null, path: [], pathTarget: null, repathTimer: 0,
-    target: null, cooldown: 0, scanTimer: Math.random() * 0.3,
-    carry: 0, gatherTimer: 0, lastMine: null,
-    facing: team === PLAYER ? -Math.PI / 4 : Math.PI * 3 / 4, attackAnim: 0,
-    stuckTimer: 0, lastDist: Infinity, dead: false,
+function addNode(type, tx, ty) {
+  const def = NODE_TYPES[type];
+  const n = {
+    id: G.nextId++, kind: 'node', type, def, solid: true,
+    tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, radius: def.radius,
+    amount: def.amount, shake: 0, variant: Math.random(),
   };
-  G.units.push(u);
-  G.byId.set(u.id, u);
-  return u;
+  G.nodes.push(n);
+  G.ents.set(n.id, n);
+  G.grid[idx(tx, ty)] = n.id;
+  return n;
 }
 
-function addBuilding(type, team, tx, ty, complete) {
-  const def = BUILDING_TYPES[type];
+function removeEntityFromGrid(e) {
+  if (G.grid[idx(e.tx, e.ty)] === e.id) G.grid[idx(e.tx, e.ty)] = 0;
+  G.ents.delete(e.id);
+}
+
+function addBuilding(type, tx, ty) {
+  const def = BUILD_TYPES[type];
   const b = {
-    id: G.nextId++, kind: 'building', type, team, def,
-    tx, ty, tw: def.w, th: def.h,
-    x: (tx + def.w / 2) * TILE, y: (ty + def.h / 2) * TILE,
-    radius: Math.max(def.w, def.h) * TILE / 2,
-    maxHp: def.hp, hp: complete ? def.hp : Math.max(1, def.hp * 0.1),
-    complete: !!complete, progress: complete ? 1 : 0,
-    queue: [], rally: null, cooldown: 0, target: null, scanTimer: 0,
-    dead: false, seen: team === PLAYER,
+    id: G.nextId++, kind: 'building', type, def, solid: def.solid,
+    tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, radius: TILE / 2,
+    hp: def.hp, maxHp: def.hp, cd: 0, hitFlash: 0, aim: -Math.PI / 2, built: 0,
   };
   G.buildings.push(b);
-  G.byId.set(b.id, b);
-  setOccupancy(b, b.id);
-  // Pousser les unités qui se trouvent sur l'emplacement
-  for (const u of G.units) unstick(u);
+  G.ents.set(b.id, b);
+  G.grid[idx(tx, ty)] = b.id;
+  G.flowDirty = true;
+  G.stats.built++;
   return b;
 }
 
-function addMine(tx, ty, gold) {
-  const m = {
-    id: G.nextId++, kind: 'mine', type: 'mine', team: -1,
-    tx, ty, tw: MINE_W, th: MINE_H,
-    x: (tx + MINE_W / 2) * TILE, y: (ty + MINE_H / 2) * TILE,
-    radius: MINE_W * TILE / 2, gold, maxGold: gold, dead: false,
-  };
-  G.mines.push(m);
-  G.byId.set(m.id, m);
-  setOccupancy(m, m.id);
-  return m;
+function destroyBuilding(b) {
+  if (b.dead) return;
+  b.dead = true;
+  removeEntityFromGrid(b);
+  G.flowDirty = true;
+  burst(b.x, b.y, '#a16207', 14, 140);
 }
 
-function unstick(u) {
-  const tx = Math.floor(u.x / TILE), ty = Math.floor(u.y / TILE);
-  if (isWalkable(tx, ty)) return;
-  const n = nearestWalkableTile(tx, ty, 15);
-  if (n) {
-    u.x = n.x * TILE + TILE / 2 + (Math.random() - 0.5) * 8;
-    u.y = n.y * TILE + TILE / 2 + (Math.random() - 0.5) * 8;
-    u.path = [];
+function message(text) {
+  G.messages.push({ text, t: 4 });
+  if (G.messages.length > 3) G.messages.shift();
+}
+
+function floater(x, y, text, color) {
+  G.floaters.push({ x, y, text, color: color || '#fde68a', t: 0 });
+}
+
+function burst(x, y, color, n, speed, life) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = Math.random() * speed;
+    G.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, life: (life || 0.6) * (0.5 + Math.random() * 0.8), color, size: 2 + Math.random() * 3 });
   }
 }
 
-// Utilitaires ----------------------------------------------------------------
+// Lumière ---------------------------------------------------------------------
 
-function rectOf(e) { return { tx: e.tx, ty: e.ty, tw: e.tw, th: e.th }; }
-
-// Distance entre le bord de l'unité et le bord de la cible.
-function edgeDist(u, e) {
-  if (e.kind === 'unit') return Math.hypot(e.x - u.x, e.y - u.y) - u.radius - e.radius;
-  const x0 = e.tx * TILE, y0 = e.ty * TILE, x1 = (e.tx + e.tw) * TILE, y1 = (e.ty + e.th) * TILE;
-  const dx = Math.max(x0 - u.x, 0, u.x - x1);
-  const dy = Math.max(y0 - u.y, 0, u.y - y1);
-  return Math.hypot(dx, dy) - (u.radius || 0);
+function hearthRadius() {
+  return HEARTH.baseRadius + G.hearth.fuel * HEARTH.radiusPerFuel;
 }
 
-function teamPop(team) {
-  let used = 0, cap = 0;
-  for (const u of G.units) if (u.team === team) used += u.def.pop;
-  for (const b of G.buildings) {
-    if (b.team !== team) continue;
-    if (b.complete && b.def.pop) cap += b.def.pop;
-    if (b.queue.length && b.queue[0].started) used += UNIT_TYPES[b.queue[0].type].pop;
-  }
-  return { used, cap: Math.min(cap, MAX_POP) };
+// Sources de lumière qui affaiblissent les ombres (le foyer, les torches, les phares)
+function refreshLights() {
+  const L = [{ x: HEARTH_X, y: HEARTH_Y, r: hearthRadius(), kind: 'hearth' }];
+  for (const b of G.buildings) if (!b.dead && b.def.light) L.push({ x: b.x, y: b.y, r: b.def.light, kind: b.type });
+  G.lights = L;
 }
 
-function hasBuilding(team, type, completeOnly) {
-  return G.buildings.some(b => b.team === team && b.type === type && (!completeOnly || b.complete));
-}
-
-function isVisibleToPlayer(e) {
-  if (e.team === PLAYER) return true;
-  if (e.kind === 'unit') {
-    const tx = Math.floor(e.x / TILE), ty = Math.floor(e.y / TILE);
-    return inMap(tx, ty) && G.visible[tileIdx(tx, ty)] === 1;
-  }
-  for (let y = e.ty; y < e.ty + e.th; y++) {
-    for (let x = e.tx; x < e.tx + e.tw; x++) {
-      if (G.visible[tileIdx(x, y)]) return true;
-    }
+function lightAt(x, y) {
+  for (const l of G.lights) {
+    const dx = x - l.x, dy = y - l.y;
+    if (dx * dx + dy * dy <= l.r * l.r) return true;
   }
   return false;
 }
 
-function notify(text, team) {
-  if (team !== undefined && team !== PLAYER) return;
-  G.messages.push({ text, t: 3.5 });
-  if (G.messages.length > 4) G.messages.shift();
+function playerLanternRadius() {
+  return PLAYER_DEF.lantern * (1 + 0.2 * G.upgrades.lantern) * (G.player.oil > 0 ? 1 : 0.45);
 }
 
-// Ordres -----------------------------------------------------------------------
+// Ressources ------------------------------------------------------------------
 
-function issueOrder(u, order) {
-  u.order = order;
-  u.path = [];
-  u.pathTarget = null;
-  u.target = null;
-  u.stuckTimer = 0;
-  u.lastDist = Infinity;
-  if (order && order.type === 'harvest') u.lastMine = order.mine;
+function canAfford(cost) {
+  return Object.entries(cost).every(([k, v]) => G.res[k] >= v);
+}
+function pay(cost) { for (const [k, v] of Object.entries(cost)) G.res[k] -= v; }
+function costText(cost) {
+  const names = { wood: 'bois', stone: 'pierre', ember: 'braise' };
+  return Object.entries(cost).map(([k, v]) => `${v} ${names[k]}${v > 1 && k !== 'wood' ? 's' : ''}`).join(', ');
 }
 
-// Positions en formation autour d'un point
-function formationOffsets(n, spacing) {
-  const out = [];
-  const cols = Math.ceil(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
-  for (let i = 0; i < n; i++) {
-    const c = i % cols, r = Math.floor(i / cols);
-    out.push({ x: (c - (cols - 1) / 2) * spacing, y: (r - (rows - 1) / 2) * spacing });
+function canBuildAt(type, tx, ty) {
+  if (!inMap(tx, ty)) return false;
+  const i = idx(tx, ty);
+  if (G.terrain[i] !== T_GRASS || G.grid[i]) return false;
+  const x = tx * TILE + TILE / 2, y = ty * TILE + TILE / 2;
+  // On ne bâtit que dans la lumière (foyer, torches, phares)
+  if (!lightAt(x, y)) return false;
+  const def = BUILD_TYPES[type];
+  if (def.solid) {
+    const p = G.player;
+    const px = Math.max(tx * TILE, Math.min(p.x, (tx + 1) * TILE)), py = Math.max(ty * TILE, Math.min(p.y, (ty + 1) * TILE));
+    if (Math.hypot(px - p.x, py - p.y) < p.radius) return false;
+    for (const e of G.enemies) if (Math.hypot(e.x - x, e.y - y) < e.radius + TILE / 2) return false;
   }
-  return out;
-}
-
-function commandMove(units, x, y, attackMove) {
-  if (!units.length) return;
-  // Trier par distance pour limiter les croisements.
-  let cx = 0, cy = 0;
-  for (const u of units) { cx += u.x; cy += u.y; }
-  cx /= units.length; cy /= units.length;
-  const angle = Math.atan2(y - cy, x - cx);
-  const offs = formationOffsets(units.length, 28);
-  const cos = Math.cos(angle + Math.PI / 2), sin = Math.sin(angle + Math.PI / 2);
-  const rotated = offs.map(o => ({ x: o.x * cos - o.y * sin, y: o.x * sin + o.y * cos }));
-  const sorted = units.slice().sort((a, b) => {
-    const pa = (a.x - cx) * cos + (a.y - cy) * sin;
-    const pb = (b.x - cx) * cos + (b.y - cy) * sin;
-    return pa - pb;
-  });
-  const slots = rotated.slice().sort((a, b) => (a.x * cos + a.y * sin) - (b.x * cos + b.y * sin));
-  sorted.forEach((u, i) => {
-    let tx = x + (units.length > 1 ? slots[i].x : 0);
-    let ty = y + (units.length > 1 ? slots[i].y : 0);
-    if (!isWalkableWorld(tx, ty)) { tx = x; ty = y; }
-    issueOrder(u, { type: attackMove ? 'attackMove' : 'move', x: tx, y: ty });
-  });
-}
-
-function commandAttack(units, target) {
-  for (const u of units) issueOrder(u, { type: 'attack', target, forced: true });
-}
-
-function commandHarvest(units, mine) {
-  for (const u of units) {
-    if (u.type === 'worker') issueOrder(u, { type: 'harvest', mine });
-    else issueOrder(u, { type: 'move', x: mine.x, y: mine.y + mine.radius + 20 });
-  }
-}
-
-function commandBuild(units, building) {
-  for (const u of units) {
-    if (u.type === 'worker') issueOrder(u, { type: 'build', building });
-  }
-}
-
-function commandStop(units) { for (const u of units) issueOrder(u, null); }
-function commandHold(units) { for (const u of units) issueOrder(u, { type: 'hold' }); }
-
-function tryPlaceBuilding(team, type, tx, ty, workers) {
-  const def = BUILDING_TYPES[type];
-  const t = G.teams[team];
-  if (def.requires && !hasBuilding(team, def.requires, true)) {
-    notify(`Nécessite : ${BUILDING_TYPES[def.requires].name}`, team);
-    return null;
-  }
-  if (t.gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or", team); return null; }
-  if (!canPlaceBuilding(type, tx, ty, team)) { notify('Emplacement invalide', team); return null; }
-  t.gold -= def.cost;
-  const b = addBuilding(type, team, tx, ty, false);
-  commandBuild(workers, b);
-  return b;
-}
-
-function queueTraining(b, type) {
-  const t = G.teams[b.team];
-  const def = UNIT_TYPES[type];
-  if (!b.complete) return false;
-  if (b.queue.length >= 5) { notify("File d'attente pleine", b.team); return false; }
-  if (t.gold < def.cost) { notify("Sire, nos coffres sont vides : pas assez d'or", b.team); return false; }
-  t.gold -= def.cost;
-  b.queue.push({ type, t: 0, started: false });
   return true;
 }
 
-function cancelTraining(b, index) {
-  const item = b.queue[index];
-  if (!item) return;
-  G.teams[b.team].gold += UNIT_TYPES[item.type].cost;
-  b.queue.splice(index, 1);
+function tryBuild(type, tx, ty) {
+  const def = BUILD_TYPES[type];
+  if (!canAfford(def.cost)) { message(`Il faut ${costText(def.cost)}.`); return false; }
+  if (!canBuildAt(type, tx, ty)) { message('Impossible de bâtir ici : il faut un emplacement libre et éclairé.'); return false; }
+  pay(def.cost);
+  const b = addBuilding(type, tx, ty);
+  burst(b.x, b.y, '#d6b77a', 10, 80);
+  return true;
 }
 
-// Mise à jour ------------------------------------------------------------------
+function repairAt(x, y) {
+  const b = G.buildings.find(o => !o.dead && Math.hypot(o.x - x, o.y - y) < TILE * 0.7);
+  if (!b || b.hp >= b.maxHp) return false;
+  if (Math.hypot(b.x - G.player.x, b.y - G.player.y) > 140) { message('Approchez-vous pour réparer.'); return false; }
+  if (G.res.wood < 1) { message('Il faut 1 bois pour réparer.'); return false; }
+  G.res.wood--;
+  b.hp = Math.min(b.maxHp, b.hp + b.maxHp * 0.35);
+  floater(b.x, b.y - 20, 'Réparé', '#86efac');
+  return true;
+}
+
+function demolishAt(x, y) {
+  const b = G.buildings.find(o => !o.dead && Math.hypot(o.x - x, o.y - y) < TILE * 0.7);
+  if (!b) return false;
+  for (const [k, v] of Object.entries(b.def.cost)) G.res[k] += Math.floor(v / 2);
+  destroyBuilding(b);
+  message(`${b.def.name} démontée (moitié des matériaux récupérée).`);
+  return true;
+}
+
+function feedHearth() {
+  const p = G.player, h = G.hearth;
+  if (Math.hypot(p.x - h.x, p.y - h.y) > 120) { message('Approchez-vous du foyer pour le nourrir.'); return; }
+  if (h.fuel >= HEARTH.maxFuel - 0.5) { message('La flamme est déjà à son maximum.'); return; }
+  if (G.res.ember > 0) {
+    G.res.ember--;
+    h.fuel = Math.min(HEARTH.maxFuel, h.fuel + HEARTH.emberFuel);
+    floater(h.x, h.y - 50, `+${HEARTH.emberFuel} flamme`, '#fb923c');
+  } else if (G.res.wood > 0) {
+    const n = Math.min(5, G.res.wood);
+    G.res.wood -= n;
+    h.fuel = Math.min(HEARTH.maxFuel, h.fuel + n * HEARTH.woodFuel);
+    floater(h.x, h.y - 50, `+${n * HEARTH.woodFuel} flamme`, '#fb923c');
+  } else {
+    message('Vous n\'avez ni braise ni bois à brûler.');
+    return;
+  }
+  burst(h.x, h.y - 10, '#fb923c', 16, 120, 0.8);
+}
+
+function upgradeCost(key) { const u = UPGRADES[key]; return u.base + u.step * G.upgrades[key]; }
+
+function buyUpgrade(key) {
+  const u = UPGRADES[key];
+  if (G.upgrades[key] >= u.max) return false;
+  const cost = upgradeCost(key);
+  if (G.res.ember < cost) { message(`Il faut ${cost} braises.`); return false; }
+  G.res.ember -= cost;
+  G.upgrades[key]++;
+  const p = G.player;
+  if (key === 'heart') { p.maxHp = PLAYER_DEF.hp + 25 * G.upgrades.heart; p.hp = p.maxHp; }
+  if (key === 'lantern') { p.maxOil = PLAYER_DEF.oil * (1 + 0.2 * G.upgrades.lantern); p.oil = p.maxOil; }
+  if (key === 'hearth') { G.hearth.maxHp = HEARTH.hp + 150 * G.upgrades.hearth; G.hearth.hp = Math.min(G.hearth.maxHp, G.hearth.hp + 150); }
+  message(`${u.name} — niveau ${G.upgrades[key]} !`);
+  burst(p.x, p.y, '#facc15', 20, 150);
+  return true;
+}
+
+// Boucle -------------------------------------------------------------------------
+
+function nightLength() { return NIGHT_BASE + (G.night - 1) * NIGHT_GROW; }
+
+function darkness() {
+  const t = G.phaseT;
+  switch (G.phase) {
+    case 'day': return 0.12;
+    case 'dusk': return 0.12 + (t / DUSK_LENGTH) * 0.8;
+    case 'night': return 0.92;
+    case 'dawn': return 0.92 - (t / 4) * 0.8;
+  }
+  return 0.5;
+}
+
+function phaseRemaining() {
+  if (G.phase === 'day') return DAY_LENGTH - G.phaseT + DUSK_LENGTH;
+  if (G.phase === 'dusk') return DUSK_LENGTH - G.phaseT;
+  if (G.phase === 'night') return nightLength() - G.phaseT;
+  return 4 - G.phaseT;
+}
 
 function update(dt) {
   if (G.over || G.paused) return;
   G.time += dt;
+  G.phaseT += dt;
+  updatePhase();
+  if (G.flowDirty) computeFlowField();
+  refreshLights();
 
-  for (const u of G.units) if (!u.dead) updateUnit(u, dt);
-  separateUnits(dt);
+  updatePlayer(dt);
+  updateHearth(dt);
+  spawnEnemies(dt);
+  for (const e of G.enemies) if (!e.dead) updateEnemy(e, dt);
+  separateEnemies();
   for (const b of G.buildings) if (!b.dead) updateBuilding(b, dt);
   updateProjectiles(dt);
+  updatePickups(dt);
 
-  for (const e of G.effects) e.t += dt;
-  G.effects = G.effects.filter(e => e.t < e.life);
+  for (const n of G.nodes) n.shake = Math.max(0, n.shake - dt);
+  for (const p of G.particles) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; }
+  G.particles = G.particles.filter(p => p.t < p.life);
+  for (const f of G.floaters) f.t += dt;
+  G.floaters = G.floaters.filter(f => f.t < 1.2);
   for (const m of G.messages) m.t -= dt;
   G.messages = G.messages.filter(m => m.t > 0);
-  G.attackAlertTimer = Math.max(0, G.attackAlertTimer - dt);
 
-  cleanupDead();
-  updateHeroes(dt);
+  G.enemies = G.enemies.filter(e => !e.dead);
+  G.buildings = G.buildings.filter(b => !b.dead);
+  G.nodes = G.nodes.filter(n => !n.dead);
 
-  G.fogTimer -= dt;
-  if (G.fogTimer <= 0) { G.fogTimer = 0.2; updateFog(); }
-
-  aiUpdate(dt);
-  checkVictory();
+  if (G.hearth.fuel <= 0) endGame('La flamme s\'est éteinte… Les ténèbres ont tout englouti.');
+  else if (G.hearth.hp <= 0) endGame('Le foyer a été détruit par les ombres.');
 }
 
-function cleanupDead() {
-  let changed = false;
-  for (const list of [G.units, G.buildings, G.mines]) {
-    for (const e of list) if (e.dead) changed = true;
-  }
-  if (!changed) return;
-  G.units = G.units.filter(e => !e.dead || (G.byId.delete(e.id), false));
-  G.buildings = G.buildings.filter(e => !e.dead || (G.byId.delete(e.id), false));
-  G.mines = G.mines.filter(e => !e.dead || (G.byId.delete(e.id), false));
-  G.selection = G.selection.filter(e => !e.dead);
-  for (const k in G.groups) G.groups[k] = G.groups[k].filter(e => !e.dead);
+function endGame(reason) {
+  G.over = { reason };
 }
 
-function checkVictory() {
-  // Les murailles seules ne suffisent pas à tenir un royaume.
-  const alive = [0, 1].map(t => G.buildings.some(b => b.team === t && b.type !== 'wall'));
-  if (!alive[ENEMY]) G.over = 'victory';
-  else if (!alive[PLAYER]) G.over = 'defeat';
+function updatePhase() {
+  if (G.phase === 'day' && G.phaseT >= DAY_LENGTH) {
+    G.phase = 'dusk'; G.phaseT = 0;
+    message('Le soleil décline… Rentrez près du foyer !');
+  } else if (G.phase === 'dusk' && G.phaseT >= DUSK_LENGTH) {
+    G.phase = 'night'; G.phaseT = 0; G.night++;
+    G.spawnLeft = 4 + G.night * 3;
+    G.spawnTimer = 1;
+    G.bossPending = G.night % BOSS_EVERY === 0;
+    message(G.bossPending ? `Nuit ${G.night} : la terre tremble… le Dévoreur approche !` : `Nuit ${G.night} : les ombres arrivent.`);
+  } else if (G.phase === 'night' && G.phaseT >= nightLength()) {
+    G.phase = 'dawn'; G.phaseT = 0;
+    G.stats.nightsSurvived = G.night;
+    for (const e of G.enemies) { e.dead = true; burst(e.x, e.y, '#fb923c', 10, 90, 0.9); }
+    const reward = 1 + Math.floor(G.night / 2);
+    G.res.ember += reward;
+    message(`L'aube se lève : les ombres brûlent ! Le foyer vous offre ${reward} braise${reward > 1 ? 's' : ''}.`);
+    regrowNodes();
+  } else if (G.phase === 'dawn' && G.phaseT >= 4) {
+    G.phase = 'day'; G.phaseT = 0;
+  }
 }
 
-// Unités -----------------------------------------------------------------------
-
-function findEnemyNear(u, range) {
-  let best = null, bestScore = Infinity;
-  const r2 = (range + 60) * (range + 60);
-  for (const e of G.units) {
-    if (e.team === u.team || e.dead) continue;
-    const dx = e.x - u.x, dy = e.y - u.y;
-    const d2 = dx * dx + dy * dy;
-    if (d2 > r2) continue;
-    const d = edgeDist(u, e);
-    if (d > range) continue;
-    // Préférer les unités combattantes aux ouvriers
-    const score = d + (e.type === 'worker' ? 60 : 0);
-    if (score < bestScore) { bestScore = score; best = e; }
+function regrowNodes() {
+  const keep = [];
+  for (const d of G.depleted) {
+    const i = idx(d.tx, d.ty);
+    const far = Math.hypot(d.tx * TILE - G.player.x, d.ty * TILE - G.player.y) > 120;
+    if (Math.random() < 0.45 && !G.grid[i] && far) addNode(d.type, d.tx, d.ty);
+    else keep.push(d);
   }
-  if (best) return best;
-  for (const b of G.buildings) {
-    if (b.team === u.team || b.dead) continue;
-    const d = edgeDist(u, b);
-    if (d > range) continue;
-    const score = d + (b.type === 'tower' ? 0 : b.type === 'wall' ? 160 : 100);
-    if (score < bestScore) { bestScore = score; best = b; }
-  }
-  return best;
+  G.depleted = keep;
+  G.flowDirty = true;
 }
 
-function moveAlongPath(u, dt, speedMult) {
-  if (!u.path.length) return true;
-  const p = u.path[0];
-  const dx = p.x - u.x, dy = p.y - u.y;
-  const d = Math.hypot(dx, dy);
-  const step = u.def.speed * (speedMult || 1) * (u.buffUntil > G.time ? 1 + WARCRY.speed : 1) * dt;
-  u.facing = Math.atan2(dy, dx);
-  if (d <= step) {
-    u.x = p.x; u.y = p.y;
-    u.path.shift();
-    return u.path.length === 0;
-  }
-  const nx = u.x + dx / d * step, ny = u.y + dy / d * step;
-  if (!isWalkableWorld(nx, ny)) {
-    // Obstacle apparu sur le chemin (ex. nouveau bâtiment) : recalculer.
-    u.path = [];
-    u.pathTarget = null;
-    return false;
-  }
-  u.x = nx; u.y = ny;
-  return false;
-}
+// Héros --------------------------------------------------------------------------
 
-// Déplace l'unité vers un point ou un bâtiment ; renvoie true si arrivée.
-function goTo(u, dt, target, key) {
-  u.repathTimer -= dt;
-  if (u.pathTarget !== key || (!u.path.length && u.repathTimer <= 0)) {
-    u.path = findPath(u.x, u.y, target, u.radius);
-    u.pathTarget = key;
-    u.repathTimer = 0.8;
-    if (!u.path.length) return true;
-  }
-  return moveAlongPath(u, dt);
-}
+function playerSpeed() { return PLAYER_DEF.speed * (1 + 0.08 * G.upgrades.swift); }
 
-function updateUnit(u, dt) {
-  u.cooldown = Math.max(0, u.cooldown - dt);
-  u.attackAnim = Math.max(0, u.attackAnim - dt);
-  const o = u.order;
-  const isWorker = u.type === 'worker';
+function updatePlayer(dt) {
+  const p = G.player;
+  p.attackCd = Math.max(0, p.attackCd - dt);
+  p.swingT = Math.max(0, p.swingT - dt);
+  p.dashCd = Math.max(0, p.dashCd - dt);
+  p.invuln = Math.max(0, p.invuln - dt);
+  p.hitFlash = Math.max(0, p.hitFlash - dt);
 
-  // Acquisition automatique des cibles
-  u.scanTimer -= dt;
-  if (u.scanTimer <= 0) {
-    u.scanTimer = 0.3;
-    if (!isWorker && (!o || o.type === 'hold' || o.type === 'attackMove' || (o.type === 'attack' && !o.forced))) {
-      const range = (o && o.type === 'hold') ? u.def.range : u.def.sight;
-      const cur = o ? o.target : null;
-      if (!cur || cur.dead || cur.kind === 'building') {
-        const e = findEnemyNear(u, range);
-        if (e && e !== cur && (!cur || cur.dead || e.kind === 'unit')) {
-          if (!o || o.type === 'attack') {
-            u.order = { type: 'attack', target: e, forced: false, homeX: u.x, homeY: u.y };
-            u.path = []; u.pathTarget = null;
-          } else if (o.type === 'attackMove') {
-            o.target = e;
-          } else if (o.type === 'hold') {
-            o.target = e;
-          }
-        }
-      }
-    } else if (isWorker && !o) {
-      // Un ouvrier inactif se défend s'il est au contact
-      const e = findEnemyNear(u, 12);
-      if (e && e.kind === 'unit') u.order = { type: 'attack', target: e, forced: false };
+  if (p.downT > 0) {
+    // Le héros est tombé : la flamme le ranime au foyer
+    p.downT -= dt;
+    if (p.downT <= 0) {
+      p.x = HEARTH_X; p.y = HEARTH_Y + 70;
+      p.hp = p.maxHp * 0.6; p.oil = p.maxOil; p.invuln = 2;
+      message('La flamme vous ramène à la vie.');
     }
-  }
-
-  if (!o) { unstickIfNeeded(u); return; }
-
-  switch (o.type) {
-    case 'move': {
-      const arrived = goTo(u, dt, { x: o.x, y: o.y }, 'm' + o.x + ',' + o.y);
-      if (arrived || Math.hypot(o.x - u.x, o.y - u.y) < 6) u.order = null;
-      else checkStuck(u, dt, o.x, o.y);
-      break;
-    }
-    case 'attackMove': {
-      if (o.target && (o.target.dead || edgeDist(u, o.target) > u.def.sight + 60)) o.target = null;
-      if (o.target) {
-        attackTarget(u, dt, o.target);
-      } else {
-        const arrived = goTo(u, dt, { x: o.x, y: o.y }, 'am' + o.x + ',' + o.y);
-        if (arrived || Math.hypot(o.x - u.x, o.y - u.y) < 8) u.order = null;
-        else checkStuck(u, dt, o.x, o.y);
-      }
-      break;
-    }
-    case 'attack': {
-      const t = o.target;
-      if (!t || t.dead) { u.order = null; break; }
-      if (t.kind === 'unit' && t.team !== PLAYER && u.team === PLAYER && !isVisibleToPlayer(t) && o.forced) {
-        // Cible perdue dans le brouillard : aller à sa dernière position connue.
-        u.order = { type: 'move', x: t.x, y: t.y };
-        break;
-      }
-      // Les unités qui ripostent automatiquement ne poursuivent pas trop loin.
-      if (!o.forced && o.homeX !== undefined && Math.hypot(u.x - o.homeX, u.y - o.homeY) > u.def.sight + 150) {
-        u.order = { type: 'move', x: o.homeX, y: o.homeY };
-        break;
-      }
-      attackTarget(u, dt, t);
-      break;
-    }
-    case 'hold': {
-      if (o.target && (o.target.dead || edgeDist(u, o.target) > u.def.range)) o.target = null;
-      if (o.target) strike(u, o.target);
-      break;
-    }
-    case 'harvest': updateHarvest(u, dt, o); break;
-    case 'return': updateReturn(u, dt, o); break;
-    case 'build': updateBuild(u, dt, o); break;
-  }
-}
-
-function unstickIfNeeded(u) {
-  if (!isWalkableWorld(u.x, u.y)) unstick(u);
-}
-
-function checkStuck(u, dt, x, y) {
-  const d = Math.hypot(x - u.x, y - u.y);
-  if (d < u.lastDist - 2) { u.lastDist = d; u.stuckTimer = 0; return; }
-  u.stuckTimer += dt;
-  if (u.stuckTimer > 1.5) {
-    // Bloqué par d'autres unités : s'arrêter si on est proche, sinon recalculer.
-    if (d < 60) u.order = null;
-    else { u.path = []; u.pathTarget = null; u.stuckTimer = 0; u.lastDist = d; }
-  }
-}
-
-function attackTarget(u, dt, t) {
-  const d = edgeDist(u, t);
-  const range = u.def.range;
-  if (u.def.minRange && t.kind === 'unit' && d < u.def.minRange) {
-    // Trop près pour une catapulte : reculer
-    const a = Math.atan2(u.y - t.y, u.x - t.x);
-    const nx = u.x + Math.cos(a) * u.def.speed * dt, ny = u.y + Math.sin(a) * u.def.speed * dt;
-    if (isWalkableWorld(nx, ny)) { u.x = nx; u.y = ny; }
     return;
   }
-  if (d <= range) {
-    u.path = []; u.pathTarget = null;
-    strike(u, t);
-    return;
-  }
-  if (t.kind === 'unit') {
-    const key = 'u' + t.id + ':' + Math.floor(t.x / 48) + ',' + Math.floor(t.y / 48);
-    goTo(u, dt, { x: t.x, y: t.y }, key);
-    if (!u.path.length) {
-      // Contact direct
-      const a = Math.atan2(t.y - u.y, t.x - u.x);
-      const nx = u.x + Math.cos(a) * u.def.speed * dt, ny = u.y + Math.sin(a) * u.def.speed * dt;
-      if (isWalkableWorld(nx, ny)) { u.x = nx; u.y = ny; }
-    }
+
+  const inp = INPUT;
+  let mx = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+  let my = (inp.down ? 1 : 0) - (inp.up ? 1 : 0);
+  const len = Math.hypot(mx, my);
+  if (len) { mx /= len; my /= len; }
+  p.facing = Math.atan2(inp.mouseY - p.y, inp.mouseX - p.x);
+
+  if (p.dashT > 0) {
+    p.dashT -= dt;
+    moveCircle(p, p.dashDx * PLAYER_DEF.dashSpeed * dt, p.dashDy * PLAYER_DEF.dashSpeed * dt);
+    if (Math.random() < 0.8) G.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, t: 0, life: 0.3, color: '#fde68a', size: 4 });
   } else {
-    approachRect(u, dt, t, 'b' + t.id, range);
+    moveCircle(p, mx * playerSpeed() * dt, my * playerSpeed() * dt);
+    if (len) p.walkT += dt;
   }
-}
 
-// S'approche d'un bâtiment/mine ; renvoie true quand l'unité est au contact.
-function approachRect(u, dt, e, key, dist) {
-  if (edgeDist(u, e) <= dist) { u.path = []; return true; }
-  goTo(u, dt, { rect: rectOf(e) }, key);
-  if (!u.path.length) {
-    // Fin du chemin : avancer directement vers le point le plus proche du rectangle
-    const px = Math.max(e.tx * TILE, Math.min((e.tx + e.tw) * TILE, u.x));
-    const py = Math.max(e.ty * TILE, Math.min((e.ty + e.th) * TILE, u.y));
-    const a = Math.atan2(py - u.y, px - u.x);
-    const nx = u.x + Math.cos(a) * u.def.speed * dt, ny = u.y + Math.sin(a) * u.def.speed * dt;
-    if (isWalkableWorld(nx, ny)) { u.x = nx; u.y = ny; }
-    else if (edgeDist(u, e) > dist + 24) { u.pathTarget = null; u.repathTimer = 0; }
+  if (inp.dash && p.dashCd <= 0 && p.dashT <= 0) {
+    const dx = len ? mx : Math.cos(p.facing), dy = len ? my : Math.sin(p.facing);
+    p.dashDx = dx; p.dashDy = dy;
+    p.dashT = PLAYER_DEF.dashTime;
+    p.dashCd = PLAYER_DEF.dashCooldown * (1 - 0.1 * G.upgrades.swift);
+    p.invuln = Math.max(p.invuln, PLAYER_DEF.dashTime + 0.08);
   }
-  return false;
-}
+  inp.dash = false;
 
-function strike(u, t) {
-  u.facing = Math.atan2(t.y - u.y, t.x - u.x);
-  if (u.cooldown > 0) return;
-  u.cooldown = u.def.cooldown;
-  u.attackAnim = 0.2;
-  if (u.def.projectile) {
-    spawnProjectile(u, t);
+  if (inp.attack && p.attackCd <= 0 && !UI.buildType) swing();
+
+  // Froid et huile de la lanterne
+  const lit = lightAt(p.x, p.y);
+  if (lit) {
+    p.oil = Math.min(p.maxOil, p.oil + 18 * dt);
+    if (G.phase !== 'night') p.hp = Math.min(p.maxHp, p.hp + 2 * dt);
+    else p.hp = Math.min(p.maxHp, p.hp + 0.6 * dt);
+  } else if (G.phase === 'night' || G.phase === 'dusk') {
+    p.oil = Math.max(0, p.oil - PLAYER_DEF.oilDrain * dt);
+    if (p.oil <= 0) hurtPlayer(PLAYER_DEF.coldDamage * dt, true);
   } else {
-    dealDamage(u, t, u.def.dmg);
+    p.hp = Math.min(p.maxHp, p.hp + 1 * dt);
   }
 }
 
-function damageFor(attacker, target, base) {
-  let dmg = base * heroDamageMult(attacker);
-  const def = attacker.def;
-  if (def.bonus && def.bonus[target.type]) dmg *= def.bonus[target.type];
-  if (target.kind === 'building') {
-    if (def.buildingBonus) dmg *= def.buildingBonus;
-    else if (attacker.kind === 'unit' && attacker.def.projectile === 'arrow') dmg *= 0.4;
-  }
-  return Math.max(1, dmg - (target.def.armor || 0));
-}
-
-function dealDamage(attacker, target, base) {
-  if (target.dead) return;
-  const dmg = damageFor(attacker, target, base);
-  target.hp -= dmg;
-  target.lastHit = G.time;
-  if (target.team === PLAYER && G.attackAlertTimer <= 0 && attacker.team === ENEMY) {
-    G.attackAlertTimer = 12;
-    notify(target.kind === 'building' ? 'Aux armes ! Nos terres sont attaquées !' : 'Nos troupes sont prises à partie !');
-    G.lastAlert = { x: target.x, y: target.y };
-  }
-  // Riposte des unités inactives
-  if (target.kind === 'unit' && !target.order && attacker.kind === 'unit' && target.type !== 'worker') {
-    target.order = { type: 'attack', target: attacker, forced: false, homeX: target.x, homeY: target.y };
-  }
-  if (target.hp <= 0) kill(target, attacker);
-}
-
-function kill(e, killer) {
-  if (e.dead) return;
-  e.dead = true;
-  e.hp = 0;
-  if (killer && killer.team >= 0) G.teams[killer.team].stats[e.kind === 'unit' ? 'killed' : 'buildingsDestroyed']++;
-  if (e.team >= 0) G.teams[e.team].stats[e.kind === 'unit' ? 'lost' : 'buildingsLost']++;
-  onKilled(e, killer);
-  if (e.kind === 'building') {
-    setOccupancy(e, 0);
-    G.effects.push({ type: 'rubble', x: e.x, y: e.y, w: e.tw * TILE, h: e.th * TILE, t: 0, life: 12 });
-    G.effects.push({ type: 'explosion', x: e.x, y: e.y, r: e.radius * 1.4, t: 0, life: 0.8 });
-  } else {
-    G.effects.push({ type: 'death', x: e.x, y: e.y, team: e.team, r: e.radius, t: 0, life: 1.2 });
-  }
-}
-
-function spawnProjectile(src, t) {
-  const kind = src.def.projectile;
-  const p = {
-    kind, team: src.team, src, target: t,
-    x: src.x, y: src.y, sx: src.x, sy: src.y,
-    tx: t.x, ty: t.y, t: 0,
-    dmg: src.def.dmg,
+function swing() {
+  const p = G.player;
+  p.attackCd = PLAYER_DEF.cooldown;
+  p.swingT = 0.2;
+  const range = PLAYER_DEF.range;
+  const dmg = PLAYER_DEF.dmg * (1 + 0.25 * G.upgrades.blade);
+  const inArc = (x, y, r) => {
+    const d = Math.hypot(x - p.x, y - p.y);
+    if (d > range + r) return false;
+    let da = Math.atan2(y - p.y, x - p.x) - p.facing;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    return Math.abs(da) <= PLAYER_DEF.arc / 2 || d < r + p.radius;
   };
-  const d = Math.hypot(t.x - src.x, t.y - src.y);
-  p.dur = kind === 'stone' ? Math.max(0.5, d / 260) : Math.max(0.15, d / 520);
-  G.projectiles.push(p);
+  let hitEnemy = false;
+  for (const e of G.enemies) {
+    if (e.dead || !inArc(e.x, e.y, e.radius)) continue;
+    const lit = lightAt(e.x, e.y);
+    damageEnemy(e, dmg * (lit ? 1.5 : 1));
+    const a = Math.atan2(e.y - p.y, e.x - p.x);
+    const kb = e.def.boss ? 4 : e.type === 'brute' ? 10 : 26;
+    moveCircle(e, Math.cos(a) * kb, Math.sin(a) * kb);
+    hitEnemy = true;
+  }
+  if (hitEnemy) return;
+  // Récolte : l'objet le plus proche dans l'arc
+  let best = null, bestD = Infinity;
+  for (const n of G.nodes) {
+    if (n.dead || !inArc(n.x, n.y, n.radius)) continue;
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  if (best) harvest(best);
+}
+
+function harvest(n) {
+  n.shake = 0.2;
+  n.amount--;
+  const res = n.def.res;
+  const gain = res === 'ember' ? 1 : 1;
+  G.res[res] += gain;
+  if (res === 'ember') G.stats.embers += gain;
+  const names = { wood: 'bois', stone: 'pierre', ember: 'braise' };
+  floater(n.x, n.y - 20, `+${gain} ${names[res]}`, res === 'ember' ? '#fb923c' : res === 'wood' ? '#d6b77a' : '#d4d4d8');
+  burst(n.x, n.y, res === 'wood' ? '#65a30d' : res === 'ember' ? '#fb923c' : '#a8a29e', 6, 90);
+  if (n.amount <= 0) {
+    n.dead = true;
+    removeEntityFromGrid(n);
+    G.depleted.push({ type: n.type, tx: n.tx, ty: n.ty });
+    G.flowDirty = true;
+  }
+}
+
+function hurtPlayer(dmg, cold) {
+  const p = G.player;
+  if (p.downT > 0) return;
+  if (!cold) {
+    if (p.invuln > 0) return;
+    p.invuln = 0.35;
+    p.hitFlash = 0.2;
+    cam.shake = 7;
+  }
+  p.hp -= dmg;
+  if (p.hp <= 0) {
+    p.hp = 0;
+    p.downT = 8;
+    burst(p.x, p.y, '#fde68a', 25, 160);
+    const cost = Math.min(G.hearth.fuel - 1, 20);
+    G.hearth.fuel -= Math.max(0, cost);
+    message(cold ? 'Le froid des ténèbres vous a terrassé… La flamme puise dans ses forces pour vous ranimer.'
+      : 'Vous êtes tombé… La flamme puise dans ses forces pour vous ranimer.');
+  }
+}
+
+// Foyer --------------------------------------------------------------------------
+
+function updateHearth(dt) {
+  const h = G.hearth;
+  h.hitFlash = Math.max(0, h.hitFlash - dt);
+  const eco = 1 - 0.08 * G.upgrades.hearth;
+  const burn = (G.phase === 'night' ? HEARTH.burnNight : HEARTH.burnDay) * eco;
+  h.fuel = Math.max(0, h.fuel - burn * dt);
+  if (Math.random() < dt * 14) {
+    G.particles.push({ x: h.x + (Math.random() - 0.5) * 30, y: h.y - 10, vx: (Math.random() - 0.5) * 20, vy: -40 - Math.random() * 60, t: 0, life: 1 + Math.random(), color: Math.random() < 0.5 ? '#fb923c' : '#fde047', size: 1.5 + Math.random() * 2 });
+  }
+  if (G.phase !== 'night') h.hp = Math.min(h.maxHp, h.hp + 3 * dt);
+}
+
+// Ombres -------------------------------------------------------------------------
+
+function spawnEnemies(dt) {
+  if (G.phase !== 'night') return;
+  if (G.bossPending && G.phaseT > 8) {
+    const pos = spawnPoint();
+    if (pos && addEnemy('devourer', pos.x, pos.y)) G.bossPending = false;
+  }
+  if (G.spawnLeft <= 0) return;
+  G.spawnTimer -= dt;
+  if (G.spawnTimer > 0) return;
+  const spread = nightLength() * 0.7;
+  G.spawnTimer = spread / (4 + G.night * 3) * (0.6 + Math.random() * 0.8);
+  // Les ombres arrivent parfois en meute
+  const pack = Math.min(G.spawnLeft, 1 + Math.floor(Math.random() * Math.min(4, 1 + G.night / 2)));
+  const pos = spawnPoint();
+  if (!pos) return;
+  for (let i = 0; i < pack; i++) {
+    const r = Math.random();
+    let type = 'shade';
+    if (G.night >= 2 && r < 0.25) type = 'stalker';
+    if (G.night >= 3 && r > 0.8) type = 'spitter';
+    if (G.night >= 4 && r > 0.93) type = 'brute';
+    addEnemy(type, pos.x + (Math.random() - 0.5) * 40, pos.y + (Math.random() - 0.5) * 40);
+    G.spawnLeft--;
+  }
+}
+
+function spawnPoint() {
+  const R = hearthRadius();
+  for (let tries = 0; tries < 60; tries++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = R + 480 + Math.random() * 300;
+    const x = HEARTH_X + Math.cos(a) * d, y = HEARTH_Y + Math.sin(a) * d;
+    const tx = tileOf(x), ty = tileOf(y);
+    if (!inMap(tx, ty) || tileSolid(tx, ty) || G.flow[idx(tx, ty)] === Infinity) continue;
+    if (Math.hypot(x - G.player.x, y - G.player.y) < 260) continue;
+    if (lightAt(x, y)) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+function addEnemy(type, x, y) {
+  const def = ENEMY_TYPES[type];
+  const scale = 1 + (G.night - 1) * 0.1;
+  const hp = Math.round(def.hp * scale);
+  const e = {
+    kind: 'enemy', type, def, x, y, radius: def.radius, hp, maxHp: hp,
+    cd: Math.random(), hitFlash: 0, fade: 0, wob: Math.random() * 10, spikeCd: 0, target: null,
+    colR: Math.min(def.radius, 14), stuck: 0,
+  };
+  if (circleHitsSolid(x, y, e.colR)) return null;
+  G.enemies.push(e);
+  return e;
+}
+
+function damageEnemy(e, dmg) {
+  if (e.dead) return;
+  e.hp -= dmg;
+  e.hitFlash = 0.12;
+  floater(e.x, e.y - e.radius - 6, Math.round(dmg).toString(), '#fecaca');
+  burst(e.x, e.y, '#4c1d95', 5, 80, 0.4);
+  if (e.hp <= 0) {
+    e.dead = true;
+    G.stats.kills++;
+    burst(e.x, e.y, e.def.eye, e.def.boss ? 60 : 16, e.def.boss ? 260 : 130, 0.9);
+    for (let i = 0; i < e.def.embers; i++) {
+      const a = Math.random() * Math.PI * 2, s = 60 + Math.random() * 90;
+      G.pickups.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0 });
+    }
+    if (e.def.boss) message('Le Dévoreur est vaincu ! Ses braises illuminent la nuit.');
+  }
+}
+
+function updateEnemy(e, dt) {
+  e.cd = Math.max(0, e.cd - dt);
+  e.spikeCd = Math.max(0, e.spikeCd - dt);
+  e.hitFlash = Math.max(0, e.hitFlash - dt);
+  e.fade = Math.min(1, e.fade + dt * 1.5);
+  e.wob += dt;
+  const p = G.player;
+  const lit = lightAt(e.x, e.y);
+  const speed = e.def.speed * (lit ? 0.62 : 1);
+  const pd = Math.hypot(p.x - e.x, p.y - e.y);
+  const playerUp = p.downT <= 0;
+
+  // Cracheur : tire à distance
+  if (e.def.ranged) {
+    let tgt = null;
+    if (playerUp && pd < e.def.ranged) tgt = p;
+    else {
+      const hd = Math.hypot(G.hearth.x - e.x, G.hearth.y - e.y);
+      if (hd < e.def.ranged) tgt = G.hearth;
+    }
+    if (tgt) {
+      if (e.cd <= 0) {
+        e.cd = e.def.cooldown;
+        const a = Math.atan2(tgt.y - e.y, tgt.x - e.x);
+        G.projectiles.push({ from: 'enemy', x: e.x, y: e.y, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, dmg: e.def.dmg, life: 1.6, r: 6, color: e.def.eye });
+      }
+      return;
+    }
+  }
+
+  // Chasse le héros s'il est proche (ou toujours pour les rôdeurs)
+  const aggro = e.def.huntsPlayer ? 900 : e.def.boss ? 160 : 230;
+  if (playerUp && pd < aggro && (pd < 70 || lineClear(e.x, e.y, p.x, p.y))) {
+    if (pd < e.radius + p.radius + 4) {
+      if (e.cd <= 0) { e.cd = e.def.cooldown; hurtPlayer(e.def.dmg * (lit ? 0.7 : 1)); }
+      return;
+    }
+    const a = Math.atan2(p.y - e.y, p.x - e.x);
+    const bx = e.x, by = e.y;
+    moveCircle(e, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt);
+    // Bloqué par une construction : l'attaquer
+    if (Math.hypot(e.x - bx, e.y - by) < speed * dt * 0.3) { attackBlocking(e, a); unstickEnemy(e, dt, speed); }
+    return;
+  }
+
+  // Suivre le champ de déplacement vers le foyer
+  const tx = tileOf(e.x), ty = tileOf(e.y);
+  const h = G.hearth;
+  if (Math.hypot(h.x - e.x, h.y - e.y) < TILE + e.radius + 6) {
+    if (e.cd <= 0) { e.cd = e.def.cooldown; hitStructure(h, e.def.dmg * (e.def.siege || 1) * (lit ? 0.7 : 1)); }
+    return;
+  }
+  const next = G.flow[idx(tx, ty)] === Infinity ? null : nextFlowTile(tx, ty);
+  let gx, gy;
+  if (next) { gx = next.x * TILE + TILE / 2; gy = next.y * TILE + TILE / 2; }
+  else { gx = h.x; gy = h.y; }
+  const nb = next ? G.ents.get(G.grid[idx(next.x, next.y)]) : null;
+  if (nb && nb.kind === 'building' && nb.solid) {
+    if (Math.hypot(nb.x - e.x, nb.y - e.y) < TILE / 2 + e.radius + 8) {
+      if (e.cd <= 0) { e.cd = e.def.cooldown; hitStructure(nb, e.def.dmg * (e.def.siege || 1) * (lit ? 0.7 : 1)); }
+      return;
+    }
+  }
+  const a = Math.atan2(gy - e.y, gx - e.x);
+  const bx = e.x, by = e.y;
+  moveCircle(e, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt);
+  if (Math.hypot(e.x - bx, e.y - by) < speed * dt * 0.3) {
+    attackBlocking(e, a);
+    unstickEnemy(e, dt, speed);
+  } else e.stuck = 0;
+}
+
+// Coincée contre un coin : se recentrer sur sa case, puis tenter un pas de côté
+function unstickEnemy(e, dt, speed) {
+  e.stuck += dt;
+  const cx = tileOf(e.x) * TILE + TILE / 2, cy = tileOf(e.y) * TILE + TILE / 2;
+  const a = Math.atan2(cy - e.y, cx - e.x);
+  moveCircle(e, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt);
+  if (e.stuck > 1.2) {
+    const r = Math.random() * Math.PI * 2;
+    moveCircle(e, Math.cos(r) * 10, Math.sin(r) * 10);
+    e.stuck = 0.6;
+  }
+}
+
+// Attaque la construction qui bloque le passage dans la direction donnée
+function attackBlocking(e, a) {
+  const tx = tileOf(e.x + Math.cos(a) * (e.radius + 12)), ty = tileOf(e.y + Math.sin(a) * (e.radius + 12));
+  if (!inMap(tx, ty)) return;
+  const b = G.ents.get(G.grid[idx(tx, ty)]);
+  if (b && (b.kind === 'building' || b.kind === 'hearth') && e.cd <= 0) {
+    e.cd = e.def.cooldown;
+    hitStructure(b, e.def.dmg * (e.def.siege || 1));
+  } else if (!b) {
+    // Coincé contre un autre obstacle : petit pas de côté
+    moveCircle(e, Math.cos(a + Math.PI / 2) * 6, Math.sin(a + Math.PI / 2) * 6);
+  }
+}
+
+function hitStructure(b, dmg) {
+  b.hp -= dmg;
+  b.hitFlash = 0.15;
+  burst(b.x, b.y, b.kind === 'hearth' ? '#fb923c' : '#a16207', 4, 70, 0.4);
+  if (b.kind === 'building' && b.hp <= 0) destroyBuilding(b);
+  if (b.kind === 'hearth' && G.time - (G.hearthWarnAt || -99) > 8) {
+    G.hearthWarnAt = G.time;
+    message('Le foyer est attaqué !');
+  }
+}
+
+function separateEnemies() {
+  const list = G.enemies;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    for (let j = i + 1; j < list.length; j++) {
+      const b = list[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const min = a.radius + b.radius;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= min * min || d2 === 0) continue;
+      const d = Math.sqrt(d2), push = (min - d) / 2;
+      const wa = a.def.boss ? 0.1 : 1, wb = b.def.boss ? 0.1 : 1;
+      moveCircle(a, -dx / d * push * wa, -dy / d * push * wa);
+      moveCircle(b, dx / d * push * wb, dy / d * push * wb);
+    }
+  }
+}
+
+// Constructions ------------------------------------------------------------------
+
+function updateBuilding(b, dt) {
+  b.hitFlash = Math.max(0, b.hitFlash - dt);
+  b.built = Math.min(1, b.built + dt * 3);
+  if (b.type === 'ballista') {
+    b.cd = Math.max(0, b.cd - dt);
+    let best = null, bestD = b.def.range;
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      const d = Math.hypot(e.x - b.x, e.y - b.y) - e.radius;
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (best) {
+      b.aim = Math.atan2(best.y - b.y, best.x - b.x);
+      if (b.cd <= 0) {
+        b.cd = b.def.cooldown;
+        G.projectiles.push({ from: 'tower', x: b.x, y: b.y, vx: Math.cos(b.aim) * 620, vy: Math.sin(b.aim) * 620, dmg: b.def.dmg, life: 0.6, r: 4, color: '#e7e5e4', target: best });
+      }
+    }
+  } else if (b.type === 'spikes') {
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      if (tileOf(e.x) === b.tx && tileOf(e.y) === b.ty && e.spikeCd <= 0) {
+        e.spikeCd = 0.5;
+        damageEnemy(e, b.def.dmg);
+        b.hp -= 1;
+        if (b.hp <= 0) { destroyBuilding(b); break; }
+      }
+    }
+  }
 }
 
 function updateProjectiles(dt) {
-  for (const p of G.projectiles) {
-    p.t += dt;
-    if (p.kind === 'arrow' && !p.target.dead) { p.tx = p.target.x; p.ty = p.target.y; }
-    const k = Math.min(1, p.t / p.dur);
-    p.x = p.sx + (p.tx - p.sx) * k;
-    p.y = p.sy + (p.ty - p.sy) * k;
-    if (k >= 1) {
-      p.done = true;
-      if (p.kind === 'arrow') {
-        if (!p.target.dead) dealDamage(p.src, p.target, p.dmg);
-      } else {
-        // Dégâts de zone
-        const splash = p.src.def.splash || 30;
-        G.effects.push({ type: 'explosion', x: p.tx, y: p.ty, r: splash, t: 0, life: 0.5 });
-        for (const e of G.units) {
-          if (e.dead || e.team === p.team) continue;
-          const d = Math.hypot(e.x - p.tx, e.y - p.ty) - e.radius;
-          if (d <= splash) dealDamage(p.src, e, p.dmg * (d <= splash / 3 ? 1 : 0.5));
-        }
-        for (const b of G.buildings) {
-          if (b.dead || b.team === p.team) continue;
-          if (edgeDist({ x: p.tx, y: p.ty, radius: 0 }, b) <= 4) dealDamage(p.src, b, p.dmg);
+  const p = G.player;
+  for (const pr of G.projectiles) {
+    pr.life -= dt;
+    pr.x += pr.vx * dt; pr.y += pr.vy * dt;
+    if (pr.life <= 0) { pr.done = true; continue; }
+    if (pr.from === 'enemy') {
+      if (p.downT <= 0 && Math.hypot(p.x - pr.x, p.y - pr.y) < p.radius + pr.r) { hurtPlayer(pr.dmg); pr.done = true; continue; }
+      const tx = tileOf(pr.x), ty = tileOf(pr.y);
+      if (inMap(tx, ty)) {
+        const b = G.ents.get(G.grid[idx(tx, ty)]);
+        if (b && (b.kind === 'building' && b.solid || b.kind === 'hearth')) { hitStructure(b, pr.dmg); pr.done = true; continue; }
+      }
+    } else {
+      for (const e of G.enemies) {
+        if (e.dead) continue;
+        if (Math.hypot(e.x - pr.x, e.y - pr.y) < e.radius + pr.r) {
+          damageEnemy(e, pr.dmg * (lightAt(e.x, e.y) ? 1.5 : 1));
+          pr.done = true;
+          break;
         }
       }
     }
   }
-  G.projectiles = G.projectiles.filter(p => !p.done);
+  G.projectiles = G.projectiles.filter(pr => !pr.done);
 }
 
-// Séparation douce entre unités pour éviter qu'elles se superposent.
-function separateUnits(dt) {
-  const cell = 48;
-  const grid = new Map();
-  for (const u of G.units) {
-    const k = Math.floor(u.x / cell) + Math.floor(u.y / cell) * 1000;
-    let arr = grid.get(k);
-    if (!arr) grid.set(k, arr = []);
-    arr.push(u);
-  }
-  for (const u of G.units) {
-    const cx = Math.floor(u.x / cell), cy = Math.floor(u.y / cell);
-    let px = 0, py = 0;
-    for (let oy = -1; oy <= 1; oy++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        const arr = grid.get(cx + ox + (cy + oy) * 1000);
-        if (!arr) continue;
-        for (const v of arr) {
-          if (v === u) continue;
-          const dx = u.x - v.x, dy = u.y - v.y;
-          const min = u.radius + v.radius - 2;
-          const d2 = dx * dx + dy * dy;
-          if (d2 >= min * min) continue;
-          const d = Math.sqrt(d2) || 0.01;
-          const push = (min - d) / min;
-          // Les ouvriers qui récoltent se traversent pour ne pas bloquer la mine.
-          if (u.type === 'worker' && v.type === 'worker' && u.order && v.order) continue;
-          const weight = (u.order && u.order.type === 'hold') ? 0.1 : (v.path.length && !u.path.length ? 1.2 : 0.8);
-          px += (dx / d || Math.random() - 0.5) * push * weight;
-          py += (dy / d || Math.random() - 0.5) * push * weight;
-        }
-      }
+function updatePickups(dt) {
+  const p = G.player;
+  for (const k of G.pickups) {
+    k.t += dt;
+    const d = Math.hypot(p.x - k.x, p.y - k.y);
+    if (p.downT <= 0 && d < 130 && k.t > 0.3) {
+      const a = Math.atan2(p.y - k.y, p.x - k.x);
+      const s = 380 * (1 - d / 160);
+      k.vx = Math.cos(a) * s; k.vy = Math.sin(a) * s;
+    } else { k.vx *= 0.9; k.vy *= 0.9; }
+    k.x += k.vx * dt; k.y += k.vy * dt;
+    if (d < p.radius + 6 && k.t > 0.3) {
+      k.done = true;
+      G.res.ember++;
+      G.stats.embers++;
     }
-    if (px || py) {
-      const s = 90 * dt;
-      const nx = u.x + px * s, ny = u.y + py * s;
-      if (isWalkableWorld(nx, u.y)) u.x = nx;
-      if (isWalkableWorld(u.x, ny)) u.y = ny;
-    }
-    u.x = Math.max(4, Math.min(WORLD_W - 4, u.x));
-    u.y = Math.max(4, Math.min(WORLD_H - 4, u.y));
+    if (k.t > 40) k.done = true;
   }
-}
-
-// Récolte ----------------------------------------------------------------------
-
-function nearestDropoff(u) {
-  let best = null, bestD = Infinity;
-  for (const b of G.buildings) {
-    if (b.team !== u.team || !b.complete || !b.def.dropoff) continue;
-    const d = Math.hypot(b.x - u.x, b.y - u.y);
-    if (d < bestD) { bestD = d; best = b; }
-  }
-  return best;
-}
-
-function nearestMine(x, y, exclude) {
-  let best = null, bestD = Infinity;
-  for (const m of G.mines) {
-    if (m.dead || m.gold <= 0 || m === exclude) continue;
-    const d = Math.hypot(m.x - x, m.y - y);
-    if (d < bestD) { bestD = d; best = m; }
-  }
-  return best;
-}
-
-function updateHarvest(u, dt, o) {
-  let m = o.mine;
-  if (!m || m.dead || m.gold <= 0) {
-    m = nearestMine(u.x, u.y);
-    if (!m || Math.hypot(m.x - u.x, m.y - u.y) > 900) {
-      if (u.carry > 0) { u.order = { type: 'return', mine: null }; } else u.order = null;
-      return;
-    }
-    o.mine = m; u.lastMine = m;
-  }
-  if (u.carry >= GATHER_AMOUNT) { u.order = { type: 'return', mine: m }; u.path = []; u.pathTarget = null; return; }
-  if (!approachRect(u, dt, m, 'mine' + m.id, 10)) return;
-  u.facing = Math.atan2(m.y - u.y, m.x - u.x);
-  u.gatherTimer += dt * G.teams[u.team].gatherMult;
-  u.attackAnim = (u.gatherTimer % 0.6) < 0.15 ? 0.1 : 0;
-  if (u.gatherTimer >= GATHER_TIME) {
-    u.gatherTimer = 0;
-    const amt = Math.min(GATHER_AMOUNT, m.gold);
-    m.gold -= amt;
-    u.carry = amt;
-    if (m.gold <= 0) {
-      m.dead = true;
-      setOccupancy(m, 0);
-      notify("Une mine d'or est épuisée", u.team);
-    }
-    u.order = { type: 'return', mine: m };
-    u.path = []; u.pathTarget = null;
-  }
-}
-
-function updateReturn(u, dt, o) {
-  const d = nearestDropoff(u);
-  if (!d) { u.order = null; return; }
-  if (!approachRect(u, dt, d, 'drop' + d.id, 10)) return;
-  G.teams[u.team].gold += u.carry;
-  G.teams[u.team].stats.gathered += u.carry;
-  u.carry = 0;
-  const m = (o.mine && !o.mine.dead && o.mine.gold > 0) ? o.mine : nearestMine(u.x, u.y);
-  if (m) { u.order = { type: 'harvest', mine: m }; u.path = []; u.pathTarget = null; }
-  else u.order = null;
-}
-
-// Construction ----------------------------------------------------------------
-
-function updateBuild(u, dt, o) {
-  const b = o.building;
-  if (!b || b.dead || b.complete) {
-    u.order = null;
-    // Enchaîner sur le chantier voisin (ex. une ligne de murailles), sinon retourner récolter
-    let next = null, nextD = 320;
-    for (const o2 of G.buildings) {
-      if (o2.team !== u.team || o2.complete || o2.dead) continue;
-      const d = Math.hypot(o2.x - u.x, o2.y - u.y);
-      if (d < nextD) { nextD = d; next = o2; }
-    }
-    if (next) u.order = { type: 'build', building: next };
-    else if (b && b.complete && u.lastMine && !u.lastMine.dead) u.order = { type: 'harvest', mine: u.lastMine };
-    return;
-  }
-  if (!approachRect(u, dt, b, 'build' + b.id, 10)) return;
-  u.facing = Math.atan2(b.y - u.y, b.x - u.x);
-  u.attackAnim = (G.time % 0.5) < 0.12 ? 0.1 : 0;
-  const inc = dt / b.def.time;
-  b.progress = Math.min(1, b.progress + inc);
-  b.hp = Math.min(b.maxHp, b.hp + b.maxHp * 0.9 * inc);
-  if (b.progress >= 1) {
-    b.complete = true;
-    notify(`Construction achevée : ${b.def.name}`, b.team);
-  }
-}
-
-// Bâtiments -------------------------------------------------------------------
-
-function updateBuilding(b, dt) {
-  if (!b.complete) return;
-  // Tours de défense
-  if (b.def.dmg) {
-    b.cooldown = Math.max(0, b.cooldown - dt);
-    b.scanTimer -= dt;
-    if (!b.target || b.target.dead || edgeDist(b.target, b) > b.def.range) {
-      b.target = null;
-      if (b.scanTimer <= 0) {
-        b.scanTimer = 0.3;
-        let best = null, bestD = Infinity;
-        for (const e of G.units) {
-          if (e.team === b.team || e.dead) continue;
-          const d = edgeDist(e, b);
-          if (d <= b.def.range && d < bestD) { bestD = d; best = e; }
-        }
-        b.target = best;
-      }
-    }
-    if (b.target && b.cooldown <= 0) {
-      b.cooldown = b.def.cooldown;
-      spawnProjectile(b, b.target);
-    }
-  }
-  // Production
-  if (!b.queue.length) return;
-  const item = b.queue[0];
-  const def = UNIT_TYPES[item.type];
-  if (!item.started) {
-    const pop = teamPop(b.team);
-    if (pop.used + def.pop > pop.cap) {
-      if (!b.popWarned) { notify('Plus de place pour loger vos sujets : bâtissez des chaumières', b.team); b.popWarned = true; }
-      return;
-    }
-    b.popWarned = false;
-    item.started = true;
-  }
-  item.t += dt;
-  if (item.t >= def.time) {
-    b.queue.shift();
-    spawnFromBuilding(b, item.type);
-  }
-}
-
-function spawnFromBuilding(b, type) {
-  // Trouver une case libre autour du bâtiment, du côté du point de ralliement
-  const rx = b.rally ? b.rally.x : b.x + (b.team === PLAYER ? 1 : -1) * 200;
-  const ry = b.rally ? b.rally.y : b.y + (b.team === PLAYER ? -1 : 1) * 100;
-  let best = null, bestD = Infinity;
-  for (let y = b.ty - 1; y <= b.ty + b.th; y++) {
-    for (let x = b.tx - 1; x <= b.tx + b.tw; x++) {
-      if (!isWalkable(x, y)) continue;
-      const px = x * TILE + TILE / 2, py = y * TILE + TILE / 2;
-      const d = Math.hypot(px - rx, py - ry);
-      if (d < bestD) { bestD = d; best = { x: px, y: py }; }
-    }
-  }
-  if (!best) {
-    const n = nearestWalkableTile(b.tx, b.ty, 10);
-    if (!n) return;
-    best = { x: n.x * TILE + TILE / 2, y: n.y * TILE + TILE / 2 };
-  }
-  const u = addUnit(type, b.team, best.x, best.y);
-  G.teams[b.team].stats.trained++;
-  if (b.rally) {
-    if (b.rally.mine && type === 'worker') issueOrder(u, { type: 'harvest', mine: b.rally.mine });
-    else issueOrder(u, { type: 'move', x: b.rally.x, y: b.rally.y });
-  } else if (type === 'worker') {
-    const m = nearestMine(u.x, u.y);
-    if (m && Math.hypot(m.x - u.x, m.y - u.y) < 500) issueOrder(u, { type: 'harvest', mine: m });
-  }
-  return u;
-}
-
-// Brouillard de guerre -------------------------------------------------------
-
-function updateFog() {
-  const vis = G.visible;
-  vis.fill(0);
-  const reveal = (x, y, sight) => {
-    const r = Math.ceil(sight / TILE);
-    const cx = Math.floor(x / TILE), cy = Math.floor(y / TILE);
-    const r2 = (sight / TILE) * (sight / TILE);
-    for (let ty = Math.max(0, cy - r); ty <= Math.min(MAP_H - 1, cy + r); ty++) {
-      for (let tx = Math.max(0, cx - r); tx <= Math.min(MAP_W - 1, cx + r); tx++) {
-        const dx = tx - cx, dy = ty - cy;
-        if (dx * dx + dy * dy <= r2) {
-          const i = tileIdx(tx, ty);
-          vis[i] = 1;
-          G.explored[i] = 1;
-        }
-      }
-    }
-  };
-  for (const u of G.units) if (u.team === PLAYER) reveal(u.x, u.y, u.def.sight);
-  for (const b of G.buildings) if (b.team === PLAYER) reveal(b.x, b.y, b.complete ? b.def.sight : 120);
-  for (const b of G.buildings) if (b.team !== PLAYER && !b.seen && isVisibleToPlayer(b)) b.seen = true;
+  G.pickups = G.pickups.filter(k => !k.done);
 }

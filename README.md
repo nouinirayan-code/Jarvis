@@ -1,104 +1,66 @@
-# Guerre des Royaumes
+# 🔥 Dernière Lueur
 
-Jeu de stratégie médiéval en temps réel, jouable dans le navigateur. An de grâce 1214 : le Seigneur Rouge menace vos terres.
-Rassemblez vos paysans, fortifiez votre domaine, levez une armée de piquiers, d'archers, de chevaliers et de trébuchets,
-puis commandez-la pour abattre le château ennemi.
+Jeu d'action et de survie en vue de dessus, jouable dans le navigateur.
+Le monde a sombré dans les ténèbres : vous veillez sur **le dernier foyer**.
+
+- **Le jour**, explorez, coupez du bois, cassez des pierres, trouvez des cristaux de braise et bâtissez vos défenses.
+- **La nuit**, les ombres surgissent des ténèbres pour éteindre le foyer. Combattez-les à l'épée.
+- **La lumière est votre arme** : dans la lumière du foyer, des torches et des phares, les ombres sont ralenties
+  et subissent +50 % de dégâts. Loin de la lumière, votre lanterne se vide et le froid vous ronge.
+- Les ombres vaincues laissent des **braises** : elles nourrissent la flamme et permettent d'acheter des améliorations.
+- Vous ne pouvez **bâtir que dans la lumière** : chaque torche agrandit votre territoire.
+- Si vous tombez, la flamme vous ranime au prix d'une partie de son combustible.
+  **Si la flamme s'éteint ou si le foyer est détruit, la partie est perdue.**
+- À l'aube, les ombres restantes brûlent. Toutes les 5 nuits, le **Dévoreur** attaque.
 
 Aucune dépendance ni compilation : HTML5 Canvas et JavaScript pur.
 
 ## Lancer le jeu
 
-Ouvrez `index.html` dans un navigateur récent (Chrome, Firefox, Edge…).
-
-Vous pouvez aussi utiliser un petit serveur local :
+Ouvrez `index.html` dans un navigateur récent, ou lancez un serveur local :
 
 ```bash
 python3 -m http.server 8000
 # puis ouvrir http://localhost:8000
 ```
 
-## Votre seigneur (avatar)
+## Commandes
 
-Au début de la partie, choisissez votre seigneur et donnez-lui votre nom :
-
-| Avatar | Style | Particularité |
-| --- | --- | --- |
-| Le Roi | Mêlée | Aura la plus puissante (+25 % de dégâts aux troupes proches) |
-| La Reine | Distance | Archère à cheval, tire de loin |
-| Le Chevalier Noir | Mêlée | Très résistant, frappe fort |
-
-Le seigneur combat sur le champ de bataille : son **aura** renforce les soldats proches, il gagne de
-l'**expérience et des niveaux** (jusqu'au niveau 10) et peut lancer un **cri de guerre** (`C`) qui galvanise
-l'armée. S'il tombe, il revient au château 45 secondes plus tard. L'ennemi est mené par Mordred, le Seigneur Rouge.
-
-## Objectif
-
-Raser **le château et tous les bâtiments** du Seigneur Rouge (en rouge) avant qu'il ne détruise les vôtres (en bleu). Les murailles ne comptent pas.
-
-## Contrôles
-
-| Action | Commande |
+| Action | Touche |
 | --- | --- |
-| Sélectionner | Clic gauche, ou glisser pour une sélection en rectangle |
-| Ajouter/retirer de la sélection | `Maj` + clic |
-| Sélectionner toutes les unités du même type à l'écran | Double-clic |
-| Ordre contextuel (déplacer, attaquer, récolter, construire, ralliement) | Clic droit |
-| Attaque-mouvement | `A` puis clic (sur la carte ou la mini-carte) |
-| Stop / Tenir la position | `S` / `H` |
-| Menu de construction (paysans) | `B` puis `Q` `W` `E` `R` `T` `Y` `U` |
-| Poser plusieurs bâtiments (ex. une ligne de murailles) | `Maj` + clic |
-| Former des unités (bâtiment sélectionné) | `Q` `W` … |
-| Groupes de contrôle | `Ctrl` + `1`–`9` pour créer, `1`–`9` pour rappeler (deux fois = centrer) |
-| Caméra | Flèches, bord de l'écran, clic molette, mini-carte ; molette = zoom |
-| Centrer la caméra | `Espace` |
-| Sélectionner votre seigneur (deux fois = centrer) | `F` ou clic sur son portrait |
-| Cri de guerre | `C` |
-| Paysan inactif suivant | `.` |
+| Se déplacer | `Z Q S D` (AZERTY) / `W A S D` (QWERTY) / flèches |
+| Frapper / récolter | Clic gauche (maintenir) |
+| Esquive | `Espace` ou `Maj` |
+| Construire | `1` à `5` (ou `B`), puis clic dans une zone éclairée |
+| Nourrir le foyer | `F` (1 braise, sinon 5 bois) |
+| Améliorations | `U` près du foyer |
+| Réparer / démonter la construction visée | `E` (1 bois) / `X` |
+| Annuler | Clic droit ou `Échap` |
 | Pause | `P` |
-| Annuler | `Échap` ou clic droit |
 
-## Unités
+## Constructions
 
-| Unité | Coût | Bâtiment | Rôle |
-| --- | --- | --- | --- |
-| Paysan | 50 | Château | Récolte l'or, bâtit les édifices |
-| Piquier | 60 | Caserne | Infanterie robuste, **brise les charges de cavalerie** |
-| Archer | 70 | Caserne | Tir à distance, **décime les piquiers** |
-| Chevalier | 140 | Écurie | Cavalerie lourde, **écrase archers et trébuchets** |
-| Trébuchet | 200 | Atelier de siège | Dégâts de zone, **abat murailles et châteaux**, portée minimale |
-
-## Bâtiments
-
-| Bâtiment | Coût | Rôle |
+| | Coût | Rôle |
 | --- | --- | --- |
-| Château | 400 | Forme les paysans, reçoit l'or, +10 population |
-| Chaumière | 100 | +8 population |
-| Caserne | 150 | Piquiers et archers |
-| Écurie | 200 | Chevaliers (nécessite une caserne) |
-| Atelier de siège | 250 | Trébuchets (nécessite une caserne) |
-| Tour d'archers | 125 | Défense automatique à distance |
-| Muraille | 15 | Rempart qui bloque le passage (se raccorde aux sections voisines) |
+| Palissade | 3 bois | Bloque les ombres, qui doivent la détruire |
+| Torche | 2 bois, 1 pierre | Lumière : ralentit et affaiblit les ombres, agrandit la zone constructible |
+| Pièges à pieux | 3 bois, 2 pierres | Blesse les ombres qui marchent dessus |
+| Baliste | 6 bois, 5 pierres | Tire automatiquement |
+| Phare | 6 pierres, 2 braises | Grande lumière |
 
-## Fonctionnalités
+## Ombres
 
-- Carte générée aléatoirement et symétrique (lacs, forêts, mines d'or)
-- Brouillard de guerre et zones explorées
-- Recherche de chemin A* et déplacement en formation
-- Système de contres (pierre-feuille-ciseaux) et armure
-- IA adverse qui gère son économie, construit sa base, s'adapte à votre armée et attaque par vagues
-- Trois niveaux de difficulté, vitesse de jeu réglable, statistiques de fin de partie
+Ombre (de base), Rôdeur (rapide, chasse le héros), Cracheur (attaque à distance), Colosse (détruit les
+constructions) et le Dévoreur (boss toutes les 5 nuits).
 
 ## Structure du code
 
 ```
-index.html        Page et interface
-css/style.css     Styles de l'interface
-js/config.js      Statistiques des unités, bâtiments et difficultés
-js/world.js       Génération de la carte et recherche de chemin (A*)
-js/game.js        État du jeu, ordres, combat, récolte, construction, brouillard
-js/hero.js        Avatars : niveaux, aura, cri de guerre, retour au château
-js/ai.js          Intelligence artificielle ennemie
-js/render.js      Rendu Canvas et mini-carte
-js/art.js         Portraits des seigneurs et icônes de l'interface
-js/ui.js          Contrôles, panneaux d'interface et boucle principale
+index.html      Page, interface et écrans
+css/style.css   Style de l'interface
+js/config.js    Réglages : héros, foyer, constructions, ombres, améliorations
+js/world.js     Génération de la carte, collisions, chemins des ombres vers le foyer
+js/game.js      Simulation : héros, combat, ombres, constructions, cycle jour/nuit
+js/render.js    Rendu et éclairage dynamique
+js/ui.js        Commandes, interface et boucle principale
 ```

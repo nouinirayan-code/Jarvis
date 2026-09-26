@@ -1,136 +1,97 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Configuration générale du jeu
+// Dernière Lueur — configuration
 // ---------------------------------------------------------------------------
-const TILE = 32;
-const MAP_W = 96;
-const MAP_H = 64;
+
+const TILE = 40;
+const MAP_W = 70;
+const MAP_H = 70;
 const WORLD_W = MAP_W * TILE;
 const WORLD_H = MAP_H * TILE;
-const MAX_POP = 200;
 
-const PLAYER = 0;
-const ENEMY = 1;
-const TEAM_COLORS = ['#3b82f6', '#ef4444'];
-const TEAM_DARK = ['#1e3a8a', '#7f1d1d'];
-const TEAM_LIGHT = ['#93c5fd', '#fca5a5'];
+const DAY_LENGTH = 55;          // secondes de jour
+const DUSK_LENGTH = 6;          // transition jour -> nuit
+const NIGHT_BASE = 65;          // durée de la première nuit
+const NIGHT_GROW = 5;           // chaque nuit dure un peu plus
+const BOSS_EVERY = 5;           // un Dévoreur toutes les 5 nuits
 
-const T_GRASS = 0;
-const T_WATER = 1;
-const T_FOREST = 2;
-
-// Unités ---------------------------------------------------------------------
-const UNIT_TYPES = {
-  worker: {
-    name: 'Paysan', hp: 60, speed: 75, dmg: 4, range: 6, cooldown: 1.2, sight: 200,
-    cost: 50, time: 8, pop: 1, radius: 9, armor: 0, letter: 'Pa',
-    desc: "Récolte l'or et bâtit les édifices du royaume.",
-  },
-  spearman: {
-    name: 'Piquier', hp: 130, speed: 65, dmg: 11, range: 8, cooldown: 1.0, sight: 220,
-    cost: 60, time: 10, pop: 1, radius: 10, armor: 2, letter: 'Pi',
-    bonus: { knight: 2.2 },
-    desc: 'Fantassin armé d\'une longue pique. Redoutable contre la cavalerie.',
-  },
-  archer: {
-    name: 'Archer', hp: 75, speed: 70, dmg: 10, range: 175, cooldown: 1.4, sight: 260,
-    cost: 70, time: 11, pop: 1, radius: 9, armor: 0, letter: 'Ar', projectile: 'arrow',
-    bonus: { spearman: 1.6 },
-    desc: 'Tire des volées de flèches. Efficace contre les piquiers.',
-  },
-  knight: {
-    name: 'Chevalier', hp: 210, speed: 115, dmg: 17, range: 8, cooldown: 1.2, sight: 240,
-    cost: 140, time: 15, pop: 2, radius: 12, armor: 3, letter: 'Ch',
-    bonus: { archer: 1.8, catapult: 2.2, worker: 1.5 },
-    desc: 'Cavalerie lourde en armure. Écrase archers et engins de siège.',
-  },
-  catapult: {
-    name: 'Trébuchet', hp: 120, speed: 40, dmg: 40, range: 290, cooldown: 3.8, sight: 260,
-    cost: 200, time: 20, pop: 3, radius: 13, armor: 1, letter: 'Tr', projectile: 'stone',
-    splash: 42, buildingBonus: 3, minRange: 70,
-    desc: 'Engin de siège : projette des pierres qui dévastent murailles et châteaux. Portée minimale.',
-  },
+const PLAYER_DEF = {
+  hp: 100, speed: 190, radius: 14,
+  dmg: 20, range: 62, arc: 1.9, cooldown: 0.36,
+  dashSpeed: 620, dashTime: 0.17, dashCooldown: 1.1,
+  lantern: 150, oil: 100, oilDrain: 2.2, coldDamage: 6,
 };
 
-// Bâtiments ------------------------------------------------------------------
-const BUILDING_TYPES = {
-  hq: {
-    name: 'Château', w: 3, h: 3, hp: 1600, sight: 300, cost: 400, time: 60,
-    pop: 10, armor: 3, trains: ['worker'], dropoff: true,
-    desc: "Cœur du royaume. Forme les paysans et reçoit l'or. +10 population.",
-  },
-  house: {
-    name: 'Chaumière', w: 2, h: 2, hp: 450, sight: 160, cost: 100, time: 15, pop: 8, armor: 1,
-    desc: 'Augmente la population maximale de 8.',
-  },
-  barracks: {
-    name: 'Caserne', w: 3, h: 3, hp: 900, sight: 220, cost: 150, time: 25, armor: 2,
-    trains: ['spearman', 'archer'],
-    desc: 'Forme les piquiers et les archers.',
-  },
-  stable: {
-    name: 'Écurie', w: 3, h: 3, hp: 900, sight: 220, cost: 200, time: 30, armor: 2,
-    trains: ['knight'], requires: 'barracks',
-    desc: 'Forme les chevaliers. Nécessite une caserne.',
-  },
-  workshop: {
-    name: 'Atelier de siège', w: 3, h: 3, hp: 900, sight: 220, cost: 250, time: 35, armor: 2,
-    trains: ['catapult'], requires: 'barracks',
-    desc: 'Construit les trébuchets. Nécessite une caserne.',
-  },
-  tower: {
-    name: 'Tour d\'archers', w: 2, h: 2, hp: 700, sight: 300, cost: 125, time: 25, armor: 3,
-    dmg: 14, range: 230, cooldown: 1.5, projectile: 'arrow',
-    desc: 'Tour fortifiée qui tire sur les ennemis à portée.',
-  },
+const HEARTH = {
+  hp: 600, fuel: 70, maxFuel: 100,
+  baseRadius: 110, radiusPerFuel: 2.6,
+  burnDay: 0.12, burnNight: 0.55,
+  emberFuel: 14, woodFuel: 2,
+};
+
+// Ressources des objets du décor
+const NODE_TYPES = {
+  tree: { name: 'Arbre', res: 'wood', amount: 5, hp: 1, radius: 16 },
+  rock: { name: 'Rocher', res: 'stone', amount: 4, hp: 1, radius: 17 },
+  crystal: { name: 'Cristal de braise', res: 'ember', amount: 3, hp: 1, radius: 14 },
+};
+
+// Constructions
+const BUILD_TYPES = {
   wall: {
-    name: 'Muraille', w: 1, h: 1, hp: 350, sight: 64, cost: 15, time: 4, armor: 5,
-    desc: 'Section de rempart en pierre qui bloque le passage. Maj + clic pour en poser plusieurs.',
+    name: 'Palissade', key: '1', cost: { wood: 3 }, hp: 140, solid: true,
+    desc: 'Bloque le passage des ombres. Elles devront la détruire.',
+  },
+  torch: {
+    name: 'Torche', key: '2', cost: { wood: 2, stone: 1 }, hp: 50, solid: true, light: 115,
+    desc: 'Éclaire les environs : les ombres y sont ralenties et vulnérables.',
+  },
+  spikes: {
+    name: 'Pièges à pieux', key: '3', cost: { wood: 3, stone: 2 }, hp: 30, solid: false, dmg: 12,
+    desc: 'Blesse les ombres qui marchent dessus. S\'use à chaque coup.',
+  },
+  ballista: {
+    name: 'Baliste', key: '4', cost: { wood: 6, stone: 5 }, hp: 170, solid: true,
+    range: 270, dmg: 17, cooldown: 1.0,
+    desc: 'Tire automatiquement sur les ombres à portée.',
+  },
+  beacon: {
+    name: 'Phare', key: '5', cost: { stone: 6, ember: 2 }, hp: 220, solid: true, light: 200,
+    desc: 'Grande lumière qui repousse les ténèbres et réchauffe le héros.',
+  },
+};
+const BUILD_ORDER = ['wall', 'torch', 'spikes', 'ballista', 'beacon'];
+
+// Ombres
+const ENEMY_TYPES = {
+  shade: {
+    name: 'Ombre', hp: 42, speed: 82, dmg: 8, radius: 13, cooldown: 1.0, embers: 1,
+    color: '#1e1b3a', eye: '#a78bfa',
+  },
+  stalker: {
+    name: 'Rôdeur', hp: 24, speed: 150, dmg: 6, radius: 10, cooldown: 0.8, embers: 1, huntsPlayer: true,
+    color: '#0f172a', eye: '#f472b6',
+  },
+  brute: {
+    name: 'Colosse', hp: 190, speed: 50, dmg: 24, radius: 21, cooldown: 1.6, embers: 4, siege: 2,
+    color: '#27131f', eye: '#fb923c',
+  },
+  spitter: {
+    name: 'Cracheur', hp: 36, speed: 72, dmg: 7, radius: 12, cooldown: 2.0, embers: 2, ranged: 230,
+    color: '#0c2a26', eye: '#4ade80',
+  },
+  devourer: {
+    name: 'Dévoreur', hp: 1600, speed: 62, dmg: 40, radius: 36, cooldown: 1.4, embers: 25, siege: 2, boss: true,
+    color: '#1a0b1e', eye: '#ef4444',
   },
 };
 
-const BUILD_ORDER_KEYS = [
-  ['house', 'Q'], ['barracks', 'W'], ['stable', 'E'], ['workshop', 'R'], ['tower', 'T'], ['wall', 'Y'], ['hq', 'U'],
-];
-const TRAIN_KEYS = ['Q', 'W', 'E', 'R'];
-
-const MINE_W = 2;
-const MINE_H = 2;
-const GATHER_AMOUNT = 10;
-const GATHER_TIME = 2.0;
-
-const DIFFICULTIES = {
-  facile: { label: 'Facile', gatherMult: 0.75, firstWave: 330, waveBase: 5, waveGrow: 2, maxWorkers: 10, startGold: 300, trainChance: 0.3, maxArmyPop: 25 },
-  normal: { label: 'Normal', gatherMult: 1.0, firstWave: 240, waveBase: 8, waveGrow: 3, maxWorkers: 14, startGold: 400, trainChance: 0.5, maxArmyPop: 45 },
-  difficile: { label: 'Difficile', gatherMult: 1.3, firstWave: 170, waveBase: 10, waveGrow: 4, maxWorkers: 18, startGold: 600, trainChance: 1, maxArmyPop: 150 },
+// Améliorations achetées au foyer avec des braises
+const UPGRADES = {
+  blade: { name: 'Lame ardente', desc: '+25 % de dégâts à l\'épée', base: 4, step: 3, max: 6 },
+  heart: { name: 'Cœur vaillant', desc: '+25 points de vie max (et soin complet)', base: 4, step: 3, max: 6 },
+  lantern: { name: 'Grande lanterne', desc: '+20 % de rayon et d\'huile pour la lanterne', base: 3, step: 3, max: 5 },
+  swift: { name: 'Pas du vent', desc: '+8 % de vitesse, esquive plus fréquente', base: 3, step: 3, max: 5 },
+  hearth: { name: 'Foyer de pierre', desc: '+150 PV au foyer et flamme plus économe', base: 5, step: 4, max: 5 },
 };
-
-// Avatars (héros) --------------------------------------------------------------
-const HEROES = {
-  roi: {
-    name: 'Arthus', title: 'Le Roi', look: 'king',
-    hp: 650, dmg: 24, armor: 4, speed: 95, range: 8, aura: 0.25,
-    desc: 'Souverain inspirant : son aura donne +25 % de dégâts aux troupes proches.',
-  },
-  reine: {
-    name: 'Aliénor', title: 'La Reine', look: 'queen',
-    hp: 480, dmg: 19, armor: 2, speed: 105, range: 190, projectile: 'arrow', aura: 0.15,
-    desc: 'Archère royale : tire à cheval depuis une longue distance. Aura +15 %.',
-  },
-  chevalier: {
-    name: 'Gauvain', title: 'Le Chevalier Noir', look: 'blackknight',
-    hp: 900, dmg: 32, armor: 6, speed: 88, range: 8, aura: 0.15,
-    desc: 'Champion invincible au corps à corps, très résistant. Aura +15 %.',
-  },
-};
-const ENEMY_HERO = {
-  name: 'Mordred', title: 'Le Seigneur Rouge', look: 'redlord',
-  hp: 650, dmg: 26, armor: 4, speed: 90, range: 8, aura: 0.2,
-  desc: 'Tyran cruel qui mène lui-même ses armées.',
-};
-const HERO_BASE = { sight: 320, cooldown: 1.0, cost: 0, time: 0, pop: 0, radius: 17, letter: '♛' };
-const HERO_RESPAWN = 45;
-const HERO_MAX_LEVEL = 10;
-const AURA_RADIUS = 200;
-const WARCRY = { cooldown: 40, duration: 8, radius: 260, dmg: 0.3, speed: 0.35 };
