@@ -51,7 +51,8 @@ function bottomH() { return $('bottombar').offsetHeight; }
 // Démarrage -------------------------------------------------------------------
 
 function startGame() {
-  newGame(ui.difficulty);
+  const typed = $('heroName').value.trim();
+  newGame(ui.difficulty, undefined, ui.heroKey, typed || null);
   aiReset();
   minimapTerrain = null;
   buildTerrainCanvas();
@@ -59,12 +60,55 @@ function startGame() {
   ui.cardSig = ''; ui.selSig = '';
   const hq = G.buildings.find(b => b.team === PLAYER);
   centerOn(hq.x, hq.y);
+  const hero = heroOf(PLAYER);
+  if (hero) setSelection([hero]);
+  const info = G.heroes[PLAYER].info;
+  $('avImg').src = portraitURL(info.look, PLAYER, 96);
+  $('avCryImg').src = commandIconURL('warcry', 24);
+  $('elImg').src = portraitURL(ENEMY_HERO.look, ENEMY, 64);
+  $('elName').textContent = `${ENEMY_HERO.name}, ${ENEMY_HERO.title}`;
   $('menu').classList.add('hidden');
+  $('avatar').classList.remove('hidden');
+  $('enemyLord').classList.remove('hidden');
   $('endScreen').classList.add('hidden');
   $('pauseScreen').classList.add('hidden');
   ui.running = true;
-  notify('Sire, levez votre armée et abattez le château du Seigneur Rouge !');
+  notify(`${info.title} ${info.name}, levez votre armée et abattez le château de ${ENEMY_HERO.name} !`);
 }
+
+// Choix de l'avatar dans le menu
+ui.heroKey = 'roi';
+function buildHeroChoice() {
+  const el = $('heroChoice');
+  el.innerHTML = Object.entries(HEROES).map(([key, h]) => `
+    <button class="hero-card${key === ui.heroKey ? ' active' : ''}" data-hero="${key}">
+      <img src="${portraitURL(h.look, PLAYER, 96)}" alt="">
+      <b>${h.title}</b>
+      <span class="hc-stats">PV ${h.hp} · Dégâts ${h.dmg} · ${h.range > 20 ? 'Distance' : 'Mêlée'}</span>
+      <span class="hc-desc">${h.desc}</span>
+    </button>`).join('');
+  $('heroName').placeholder = HEROES[ui.heroKey].name;
+}
+$('heroChoice').addEventListener('click', e => {
+  const card = e.target.closest('.hero-card');
+  if (!card) return;
+  ui.heroKey = card.dataset.hero;
+  buildHeroChoice();
+});
+buildHeroChoice();
+
+$('avatar').addEventListener('click', e => {
+  if (!G || e.target.closest('#avCry')) return;
+  const hero = heroOf(PLAYER);
+  if (!hero) return;
+  if (e.detail >= 2) centerOn(hero.x, hero.y);
+  setSelection([hero]);
+});
+$('avCry').addEventListener('click', () => { if (G && !G.paused) warCry(PLAYER); });
+$('enemyLord').addEventListener('click', () => {
+  const lord = heroOf(ENEMY);
+  if (lord && isVisibleToPlayer(lord)) { centerOn(lord.x, lord.y); setSelection([lord]); }
+});
 
 function centerOn(x, y) {
   cam.x = x - viewW / 2 / cam.zoom;
@@ -291,6 +335,15 @@ function commandCard() {
       btns.push({ id: 'back', label: 'Retour', key: 'ESCAPE', keyLabel: 'Échap', desc: 'Revenir aux ordres.', action: () => { ui.buildMenu = false; } });
       return btns;
     }
+    const hero = units.find(u => u.isHero);
+    if (hero) {
+      const cd = Math.ceil(G.heroes[PLAYER].cryReadyAt - G.time);
+      btns.push({
+        id: 'warcry', label: 'Cri de guerre', key: 'C',
+        desc: `Galvanise les troupes proches : +30 % de dégâts et +35 % de vitesse pendant ${WARCRY.duration} s.` + (cd > 0 ? `<br><i>Disponible dans ${cd} s</i>` : ''),
+        disabled: cd > 0, action: () => warCry(PLAYER),
+      });
+    }
     btns.push({ id: 'atk', label: 'Attaquer', key: 'A', desc: "Attaque-mouvement : se déplacer en attaquant tout ennemi rencontré. Cliquez sur une cible ou un point.", action: startAttackMode });
     btns.push({ id: 'stop', label: 'Stop', key: 'S', desc: 'Arrêter toute action.', action: () => commandStop(units) });
     btns.push({ id: 'hold', label: 'Tenir position', key: 'H', desc: "Rester sur place et n'attaquer que les ennemis à portée.", action: () => commandHold(units) });
@@ -354,7 +407,11 @@ function refreshCommandCard() {
   btns.forEach((b, i) => {
     const d = document.createElement('button');
     d.className = 'cmd' + (b.disabled ? ' disabled' : '') + ((ui.mode === 'attack' && b.id === 'cancel') ? ' active' : '');
-    d.innerHTML = `<span class="key">${b.keyLabel || b.key}</span><span>${b.label}</span>` + (b.cost ? `<span class="cost">${b.cost} or</span>` : '');
+    const icon = b.id.startsWith('b_') ? entityIconURL('building', b.id.slice(2), PLAYER, 44)
+      : b.id.startsWith('t_') ? entityIconURL('unit', b.id.slice(2), PLAYER, 44)
+      : commandIconURL(b.id, 44);
+    d.innerHTML = `<img src="${icon}" alt=""><span class="key">${b.keyLabel || b.key}</span><span class="lbl">${b.label}</span>` +
+      (b.cost ? `<span class="cost">${b.cost}</span>` : '');
     d.dataset.index = i;
     el.appendChild(d);
   });
@@ -403,7 +460,7 @@ function refreshSelectionPanel() {
   if (!sel.length) {
     if (ui.selSig !== 'none') {
       ui.selSig = 'none';
-      el.innerHTML = '<div style="color:#78716c;padding-top:8px">Aucune sélection.<br><br>Astuce : clic gauche pour sélectionner, clic droit pour donner un ordre.</div>';
+      el.innerHTML = '<div class="muted empty-sel"><b>Aucune sélection.</b><br>Clic gauche pour sélectionner, clic droit pour donner un ordre.<br><kbd>F</kbd> sélectionne votre seigneur.</div>';
     }
     return;
   }
@@ -411,7 +468,7 @@ function refreshSelectionPanel() {
   if (sel.length === 1) {
     const e = sel[0];
     if (e.kind === 'mine') {
-      html = `<div class="sel-single"><div class="portrait" style="background:#a16207">Or</div><div class="sel-info">
+      html = `<div class="sel-single"><img class="portrait" src="${entityIconURL('mine', 'mine', -1, 72)}" alt=""><div class="sel-info">
         <h3>Mine d'or</h3><div class="desc">Clic droit avec des paysans pour récolter.</div>
         <div>Or restant : <b style="color:#facc15">${Math.floor(e.gold)}</b> / ${e.maxGold}</div></div></div>`;
     } else {
@@ -420,7 +477,10 @@ function refreshSelectionPanel() {
       let extra = '';
       if (e.kind === 'unit') {
         const state = unitStateLabel(e);
-        extra = `<div class="stats">
+        const hs = e.isHero ? G.heroes[e.team] : null;
+        extra = (hs ? `<div class="hero-line">${hs.info.title} · Niveau <b>${hs.level}</b> · ${hs.kills} victoires · Aura +${Math.round(def.aura * 100)} %</div>
+          <div class="bar xp small"><div style="width:${hs.level >= HERO_MAX_LEVEL ? 100 : hs.xp / heroXpNeeded(hs.level) * 100}%"></div></div>` : '') +
+          `<div class="stats">
           <span>Dégâts</span><b>${def.dmg}${def.splash ? ' (zone)' : ''}</b>
           <span>Armure</span><b>${def.armor}</b>
           <span>Portée</span><b>${def.range > 20 ? def.range : 'mêlée'}</b>
@@ -436,27 +496,27 @@ function refreshSelectionPanel() {
           if (def.pop) parts.push(`<span>Population</span><b>+${def.pop}</b>`);
           extra = `<div class="stats">${parts.join('')}</div>`;
           if (e.team === PLAYER && def.trains) {
-            extra += '<div class="queue">' + (e.queue.length ? '' : '<span style="color:#78716c">File vide — clic droit sur la carte pour le point de ralliement</span>');
+            extra += '<div class="queue">' + (e.queue.length ? '' : '<span class="muted">File vide — clic droit sur la carte pour le point de ralliement</span>');
             e.queue.forEach((q, i) => {
               const ud = UNIT_TYPES[q.type];
-              extra += `<div class="qitem" data-q="${i}" style="${badgeStyle(e)}" title="Annuler ${ud.name}">${ud.letter}` +
+              extra += `<div class="qitem" data-q="${i}" title="Annuler ${ud.name}"><img src="${entityIconURL('unit', q.type, e.team, 34)}" alt="">` +
                 (i === 0 ? `<div class="prog" style="width:${(q.t / ud.time * 100).toFixed(0)}%"></div>` : '') + '</div>';
             });
             extra += '</div>';
           }
         }
       }
-      const letter = e.kind === 'unit' ? def.letter : def.name[0];
-      html = `<div class="sel-single"><div class="portrait" style="${badgeStyle(e)}">${letter}</div><div class="sel-info">
+      const icon = entityIconURL(e.kind, e.type, e.team, 72, def.look);
+      html = `<div class="sel-single"><img class="portrait${e.isHero ? ' hero' : ''}" src="${icon}" alt=""><div class="sel-info">
         <h3>${def.name}${e.team === ENEMY ? ' <span style="color:#f87171;font-size:12px">(Seigneur Rouge)</span>' : ''}</h3>
         <div class="hpbar"><div style="width:${f * 100}%;background:${hpColor(f)}"></div></div>
-        <div style="color:#a8a29e">PV ${Math.ceil(e.hp)} / ${e.maxHp}</div>
+        <div class="muted">PV ${Math.ceil(e.hp)} / ${e.maxHp}</div>
         ${extra}</div></div>`;
     }
   } else {
     html = '<div class="sel-multi">' + sel.map((e, i) => {
       const f = e.hp / e.maxHp;
-      return `<div class="uicon" data-i="${i}" style="${badgeStyle(e)}" title="${e.def.name}">${e.def.letter || e.def.name[0]}
+      return `<div class="uicon${e.isHero ? ' hero' : ''}" data-i="${i}" title="${e.def.name}"><img src="${entityIconURL(e.kind, e.type, e.team, 40, e.def.look)}" alt="">
         <div class="mini"><div style="width:${f * 100}%;background:${hpColor(f)}"></div></div></div>`;
     }).join('') + '</div>';
   }
@@ -634,6 +694,18 @@ window.addEventListener('keydown', e => {
   if (key === '.' || key === ';') { selectIdleWorker(); return; }
   if (key.startsWith('ARROW')) { e.preventDefault(); return; }
 
+  if (key === 'F') {
+    const hero = heroOf(PLAYER);
+    if (hero) {
+      const now = performance.now();
+      if (G.selection.length === 1 && G.selection[0] === hero && now - (ui.lastF || 0) < 500) centerOn(hero.x, hero.y);
+      ui.lastF = now;
+      setSelection([hero]);
+    }
+    return;
+  }
+  if (key === 'C' && !ui.placing) { warCry(PLAYER); ui.cardSig = ''; return; }
+
   // Raccourcis de la carte de commandes
   const btns = commandCard();
   ui.currentButtons = btns;
@@ -728,8 +800,32 @@ function refreshHud() {
   const s = Math.floor(G.time);
   $('clock').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   $('messages').innerHTML = G.messages.map(m => `<div style="opacity:${Math.min(1, m.t)}">${m.text}</div>`).join('');
+  refreshAvatar();
   refreshCommandCard();
   refreshSelectionPanel();
+}
+
+function refreshAvatar() {
+  const h = G.heroes[PLAYER];
+  const u = heroOf(PLAYER);
+  $('avName').textContent = h.info.name;
+  $('avTitle').textContent = `${h.info.title} · Niveau ${h.level}`;
+  $('avLevel').textContent = h.level;
+  const f = u ? u.hp / u.maxHp : 0;
+  $('avHp').style.width = (f * 100) + '%';
+  $('avHp').style.background = hpColor(f);
+  $('avHpTxt').textContent = u ? `${Math.ceil(u.hp)} / ${u.maxHp}` : 'Tombé au combat';
+  $('avXp').style.width = (h.level >= HERO_MAX_LEVEL ? 100 : h.xp / heroXpNeeded(h.level) * 100) + '%';
+  $('avatar').classList.toggle('dead', !u);
+  $('avatar').classList.toggle('selected', !!u && G.selection.includes(u));
+  $('avDead').classList.toggle('hidden', !!u);
+  if (!u) $('avDead').textContent = Math.max(0, Math.ceil(h.respawnAt - G.time)) + ' s';
+  const cd = h.cryReadyAt - G.time;
+  $('avCry').disabled = !u || cd > 0;
+  $('avCryCd').style.width = cd > 0 ? (cd / WARCRY.cooldown * 100) + '%' : '0';
+  const e = G.heroes[ENEMY], lord = heroOf(ENEMY);
+  $('elState').textContent = lord ? `Niveau ${e.level}` + (isVisibleToPlayer(lord) ? ' · en vue !' : '') : `Tombé · retour dans ${Math.max(0, Math.ceil(e.respawnAt - G.time))} s`;
+  $('enemyLord').classList.toggle('dead', !lord);
 }
 
 function showEnd() {

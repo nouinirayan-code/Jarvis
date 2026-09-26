@@ -11,9 +11,11 @@
     <canvas id="game"></canvas>
 
     <div id="topbar" class="hud">
-      <div class="res"><span class="icon gold"></span><span id="gold">0</span></div>
-      <div class="res"><span class="icon pop"></span><span id="pop">0/0</span></div>
+      <div class="res" title="Or du royaume"><span class="icon gold"></span><span id="gold">0</span></div>
+      <div class="res" title="Population (sujets / logements)"><span class="icon pop"></span><span id="pop">0/0</span></div>
       <button id="idleBtn" class="small" title="Sélectionner un paysan inactif (touche .)">Paysans inactifs : <span id="idleCount">0</span></button>
+      <div class="spacer"></div>
+      <div class="realm-title">⚜ Guerre des Royaumes ⚜</div>
       <div class="spacer"></div>
       <div id="clock">00:00</div>
       <button id="speedBtn" class="small" title="Vitesse du jeu">Vitesse x1</button>
@@ -21,6 +23,31 @@
     </div>
 
     <div id="messages"></div>
+
+    <div id="avatar" class="frame hidden" title="Votre seigneur — clic : sélectionner, double-clic : centrer (touche F)">
+      <div class="av-portrait">
+        <img id="avImg" alt="">
+        <div id="avLevel" class="av-level">1</div>
+        <div id="avDead" class="av-dead hidden"></div>
+      </div>
+      <div class="av-info">
+        <div class="av-name"><span id="avName"></span></div>
+        <div id="avTitle" class="av-title"></div>
+        <div class="bar hp"><div id="avHp"></div><span id="avHpTxt"></span></div>
+        <div class="bar xp"><div id="avXp"></div></div>
+        <button id="avCry" class="av-cry" title="Cri de guerre (C) : +30 % de dégâts et +35 % de vitesse aux troupes proches pendant 8 s">
+          <img id="avCryImg" alt=""><span>Cri de guerre</span><kbd>C</kbd><div id="avCryCd" class="cd"></div>
+        </button>
+      </div>
+    </div>
+
+    <div id="enemyLord" class="frame hidden" title="Le chef ennemi">
+      <img id="elImg" alt="">
+      <div>
+        <div id="elName" class="av-name"></div>
+        <div id="elState" class="av-title"></div>
+      </div>
+    </div>
 
     <div id="bottombar" class="hud">
       <canvas id="minimap" width="240" height="160"></canvas>
@@ -34,6 +61,9 @@
       <div class="panel">
         <h1>⚔ Guerre des Royaumes ⚔</h1>
         <p class="subtitle">An de grâce 1214. Le Seigneur Rouge menace vos terres.<br>Rassemblez vos paysans, levez une armée de piquiers, d'archers et de chevaliers, et abattez son château.</p>
+        <h3>Choisissez votre seigneur</h3>
+        <div id="heroChoice" class="hero-cards"></div>
+        <label class="hero-name">Votre nom : <input id="heroName" maxlength="16" placeholder="Arthus"></label>
         <h3>Puissance de l'ennemi</h3>
         <div id="difficulty" class="choices">
           <button data-diff="facile">Facile</button>
@@ -52,9 +82,11 @@
               <li><kbd>S</kbd> stop, <kbd>H</kbd> tenir la position, <kbd>B</kbd> menu de construction (paysans).</li>
               <li><kbd>Ctrl</kbd>+<kbd>1-9</kbd> : créer un groupe, <kbd>1-9</kbd> : le rappeler (deux fois pour centrer la caméra).</li>
               <li><kbd>Flèches</kbd> / bord de l'écran / clic molette : déplacer la caméra. Molette : zoom. <kbd>Espace</kbd> : centrer.</li>
+              <li><kbd>F</kbd> : sélectionner votre seigneur (deux fois pour centrer), <kbd>C</kbd> : cri de guerre.</li>
               <li><kbd>.</kbd> : paysan inactif, <kbd>P</kbd> : pause, <kbd>Échap</kbd> : annuler.</li>
             </ul>
             <p><b>Armée :</b> les <b>piquiers</b> brisent les charges de cavalerie, les <b>archers</b> déciment les piquiers, les <b>chevaliers</b> écrasent archers et trébuchets. Les <b>trébuchets</b> abattent murailles et châteaux.</p>
+            <p><b>Votre seigneur :</b> c'est votre avatar sur le champ de bataille. Son aura renforce les troupes proches, il gagne des niveaux en combattant et revient au château 45 s après sa mort.</p>
             <p><b>Royaume :</b> les paysans récoltent l'or et le rapportent au château. Bâtissez des chaumières pour loger plus de sujets et des <b>murailles</b> (Maj + clic pour en poser plusieurs) pour fortifier votre domaine.</p>
           </div>
         </details>
@@ -81,8 +113,10 @@
   <script src="js/config.js"></script>
   <script src="js/world.js"></script>
   <script src="js/game.js"></script>
+  <script src="js/hero.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/render.js"></script>
+  <script src="js/art.js"></script>
   <script src="js/ui.js"></script>
 </body>
 </html>

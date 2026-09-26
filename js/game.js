@@ -6,7 +6,7 @@
 
 let G = null;
 
-function newGame(difficulty, seed) {
+function newGame(difficulty, seed, heroKey, heroName) {
   const diff = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
   seed = seed || (Math.random() * 1e9) | 0;
   G = {
@@ -36,6 +36,10 @@ function newGame(difficulty, seed) {
     paused: false,
     fogTimer: 0,
     attackAlertTimer: 0,
+    heroes: [
+      newHeroState(Object.assign({}, HEROES[heroKey] || HEROES.roi, heroName ? { name: heroName } : {})),
+      newHeroState(ENEMY_HERO),
+    ],
   };
 
   // Mines d'or (symétriques)
@@ -55,6 +59,7 @@ function newGame(difficulty, seed) {
     }
     addUnit('spearman', team, hq.x - dir * 60, hq.y - dir * 60);
     addUnit('archer', team, hq.x - dir * 30, hq.y - dir * 75);
+    spawnHero(team);
   }
   for (const u of G.units) {
     unstick(u);
@@ -70,8 +75,8 @@ function newStats() {
 
 // Création des entités -------------------------------------------------------
 
-function addUnit(type, team, x, y) {
-  const def = UNIT_TYPES[type];
+function addUnit(type, team, x, y, customDef) {
+  const def = customDef || UNIT_TYPES[type];
   const u = {
     id: G.nextId++, kind: 'unit', type, team, def,
     x, y, radius: def.radius,
@@ -298,6 +303,7 @@ function update(dt) {
   G.attackAlertTimer = Math.max(0, G.attackAlertTimer - dt);
 
   cleanupDead();
+  updateHeroes(dt);
 
   G.fogTimer -= dt;
   if (G.fogTimer <= 0) { G.fogTimer = 0.2; updateFog(); }
@@ -358,7 +364,7 @@ function moveAlongPath(u, dt, speedMult) {
   const p = u.path[0];
   const dx = p.x - u.x, dy = p.y - u.y;
   const d = Math.hypot(dx, dy);
-  const step = u.def.speed * (speedMult || 1) * dt;
+  const step = u.def.speed * (speedMult || 1) * (u.buffUntil > G.time ? 1 + WARCRY.speed : 1) * dt;
   u.facing = Math.atan2(dy, dx);
   if (d <= step) {
     u.x = p.x; u.y = p.y;
@@ -541,7 +547,7 @@ function strike(u, t) {
 }
 
 function damageFor(attacker, target, base) {
-  let dmg = base;
+  let dmg = base * heroDamageMult(attacker);
   const def = attacker.def;
   if (def.bonus && def.bonus[target.type]) dmg *= def.bonus[target.type];
   if (target.kind === 'building') {
@@ -574,6 +580,7 @@ function kill(e, killer) {
   e.hp = 0;
   if (killer && killer.team >= 0) G.teams[killer.team].stats[e.kind === 'unit' ? 'killed' : 'buildingsDestroyed']++;
   if (e.team >= 0) G.teams[e.team].stats[e.kind === 'unit' ? 'lost' : 'buildingsLost']++;
+  onKilled(e, killer);
   if (e.kind === 'building') {
     setOccupancy(e, 0);
     G.effects.push({ type: 'rubble', x: e.x, y: e.y, w: e.tw * TILE, h: e.th * TILE, t: 0, life: 12 });

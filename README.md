@@ -17,6 +17,20 @@ python3 -m http.server 8000
 # puis ouvrir http://localhost:8000
 ```
 
+## Votre seigneur (avatar)
+
+Au début de la partie, choisissez votre seigneur et donnez-lui votre nom :
+
+| Avatar | Style | Particularité |
+| --- | --- | --- |
+| Le Roi | Mêlée | Aura la plus puissante (+25 % de dégâts aux troupes proches) |
+| La Reine | Distance | Archère à cheval, tire de loin |
+| Le Chevalier Noir | Mêlée | Très résistant, frappe fort |
+
+Le seigneur combat sur le champ de bataille : son **aura** renforce les soldats proches, il gagne de
+l'**expérience et des niveaux** (jusqu'au niveau 10) et peut lancer un **cri de guerre** (`C`) qui galvanise
+l'armée. S'il tombe, il revient au château 45 secondes plus tard. L'ennemi est mené par Mordred, le Seigneur Rouge.
+
 ## Objectif
 
 Raser **le château et tous les bâtiments** du Seigneur Rouge (en rouge) avant qu'il ne détruise les vôtres (en bleu). Les murailles ne comptent pas.
@@ -37,6 +51,8 @@ Raser **le château et tous les bâtiments** du Seigneur Rouge (en rouge) avant 
 | Groupes de contrôle | `Ctrl` + `1`–`9` pour créer, `1`–`9` pour rappeler (deux fois = centrer) |
 | Caméra | Flèches, bord de l'écran, clic molette, mini-carte ; molette = zoom |
 | Centrer la caméra | `Espace` |
+| Sélectionner votre seigneur (deux fois = centrer) | `F` ou clic sur son portrait |
+| Cri de guerre | `C` |
 | Paysan inactif suivant | `.` |
 | Pause | `P` |
 | Annuler | `Échap` ou clic droit |
@@ -80,7 +96,9 @@ css/style.css     Styles de l'interface
 js/config.js      Statistiques des unités, bâtiments et difficultés
 js/world.js       Génération de la carte et recherche de chemin (A*)
 js/game.js        État du jeu, ordres, combat, récolte, construction, brouillard
+js/hero.js        Avatars : niveaux, aura, cri de guerre, retour au château
 js/ai.js          Intelligence artificielle ennemie
 js/render.js      Rendu Canvas et mini-carte
+js/art.js         Portraits des seigneurs et icônes de l'interface
 js/ui.js          Contrôles, panneaux d'interface et boucle principale
 ```

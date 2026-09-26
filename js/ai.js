@@ -100,6 +100,20 @@ function aiUpdate(dt) {
     }
   }
 
+  // Le Seigneur Rouge : cri de guerre au combat, repli s'il est très blessé
+  const lord = heroOf(team);
+  if (lord) {
+    const foes = G.units.filter(u => u.team === PLAYER && Math.hypot(u.x - lord.x, u.y - lord.y) < 260);
+    if (foes.length >= 2) warCry(team);
+    if (lord.hp < lord.maxHp * 0.3 && foes.length && Math.hypot(lord.x - center.x, lord.y - center.y) > 300) {
+      issueOrder(lord, { type: 'move', x: center.x, y: center.y + 60 });
+      lord.retreating = true;
+    } else if (lord.retreating && lord.hp > lord.maxHp * 0.7) {
+      lord.retreating = false;
+    }
+  }
+  const armyReady = army.filter(u => !u.retreating);
+
   // 6. Défense de la base
   const threats = G.units.filter(u => u.team === PLAYER && mine.some(b => Math.hypot(b.x - u.x, b.y - u.y) < 500));
   if (threats.length) {
@@ -120,7 +134,7 @@ function aiUpdate(dt) {
   }
 
   // 7. Vagues d'attaque
-  const idleArmy = army.filter(u => !u.order);
+  const idleArmy = armyReady.filter(u => !u.order);
   if (!AI.attacking) {
     // Regroupement devant la base
     const rx = center.x - 220, ry = center.y + 220;

@@ -105,3 +105,32 @@ const DIFFICULTIES = {
   normal: { label: 'Normal', gatherMult: 1.0, firstWave: 240, waveBase: 8, waveGrow: 3, maxWorkers: 14, startGold: 400, trainChance: 0.5, maxArmyPop: 45 },
   difficile: { label: 'Difficile', gatherMult: 1.3, firstWave: 170, waveBase: 10, waveGrow: 4, maxWorkers: 18, startGold: 600, trainChance: 1, maxArmyPop: 150 },
 };
+
+// Avatars (héros) --------------------------------------------------------------
+const HEROES = {
+  roi: {
+    name: 'Arthus', title: 'Le Roi', look: 'king',
+    hp: 650, dmg: 24, armor: 4, speed: 95, range: 8, aura: 0.25,
+    desc: 'Souverain inspirant : son aura donne +25 % de dégâts aux troupes proches.',
+  },
+  reine: {
+    name: 'Aliénor', title: 'La Reine', look: 'queen',
+    hp: 480, dmg: 19, armor: 2, speed: 105, range: 190, projectile: 'arrow', aura: 0.15,
+    desc: 'Archère royale : tire à cheval depuis une longue distance. Aura +15 %.',
+  },
+  chevalier: {
+    name: 'Gauvain', title: 'Le Chevalier Noir', look: 'blackknight',
+    hp: 900, dmg: 32, armor: 6, speed: 88, range: 8, aura: 0.15,
+    desc: 'Champion invincible au corps à corps, très résistant. Aura +15 %.',
+  },
+};
+const ENEMY_HERO = {
+  name: 'Mordred', title: 'Le Seigneur Rouge', look: 'redlord',
+  hp: 650, dmg: 26, armor: 4, speed: 90, range: 8, aura: 0.2,
+  desc: 'Tyran cruel qui mène lui-même ses armées.',
+};
+const HERO_BASE = { sight: 320, cooldown: 1.0, cost: 0, time: 0, pop: 0, radius: 17, letter: '♛' };
+const HERO_RESPAWN = 45;
+const HERO_MAX_LEVEL = 10;
+const AURA_RADIUS = 200;
+const WARCRY = { cooldown: 40, duration: 8, radius: 260, dmg: 0.3, speed: 0.35 };

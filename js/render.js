@@ -173,6 +173,27 @@ function render(ctx, W, H, ui, dpr) {
     }
   }
 
+  // Cri de guerre et montée de niveau
+  for (const e of G.effects) {
+    if (e.type !== 'warcry' && e.type !== 'levelup') continue;
+    if (e.follow && !e.follow.dead) { e.x = e.follow.x; e.y = e.follow.y; }
+    if (!isPointVisible(e.x, e.y)) continue;
+    const k = e.t / e.life;
+    ctx.globalAlpha = 1 - k;
+    if (e.type === 'warcry') {
+      ctx.strokeStyle = e.team === PLAYER ? '#facc15' : '#f87171'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(e.x, e.y, WARCRY.radius * k, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 16px Georgia, serif'; ctx.textAlign = 'center';
+      ctx.fillText('Niveau supérieur !', e.x, e.y - 40 - k * 20);
+      ctx.textAlign = 'start';
+      ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, 20 + k * 30, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // Explosions
   for (const e of G.effects) {
     if (e.type !== 'explosion' || !isPointVisible(e.x, e.y)) continue;
@@ -270,6 +291,51 @@ function drawUnit(ctx, u, selected, hovered) {
   ctx.translate(u.x, u.y);
 
   switch (u.type) {
+    case 'hero': {
+      const look = u.def.look;
+      // Halo de l'aura
+      ctx.strokeStyle = u.team === PLAYER ? 'rgba(250,204,21,0.35)' : 'rgba(248,113,113,0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, r + 6 + Math.sin(G ? G.time * 4 : 0) * 1.5, 0, Math.PI * 2); ctx.stroke();
+      // Destrier caparaçonné
+      ctx.save();
+      ctx.rotate(u.facing);
+      ctx.fillStyle = look === 'blackknight' || look === 'redlord' ? '#1c1917' : '#f5f5f4';
+      ctx.beginPath(); ctx.ellipse(0, 0, r + 3, r * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(r + 4, 0, 6, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(-2, 0, r * 0.85, r * 0.66, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#facc15'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Cape
+      ctx.fillStyle = look === 'blackknight' ? '#18181b' : look === 'redlord' ? '#450a0a' : dark;
+      ctx.beginPath(); ctx.moveTo(-2, -7); ctx.quadraticCurveTo(-r - 6, 0, -2, 7); ctx.fill();
+      ctx.restore();
+      // Cavalier
+      ctx.fillStyle = look === 'blackknight' ? '#3f3f46' : '#d4d4d8'; ctx.strokeStyle = '#27272a'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(0, -3, r * 0.55, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      if (look === 'king' || look === 'redlord') {
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath(); ctx.moveTo(-6, -5); ctx.lineTo(-6, -12); ctx.lineTo(-3, -9); ctx.lineTo(0, -14); ctx.lineTo(3, -9); ctx.lineTo(6, -12); ctx.lineTo(6, -5); ctx.fill();
+      } else if (look === 'queen') {
+        ctx.fillStyle = '#9a3412'; ctx.beginPath(); ctx.arc(0, -3, r * 0.45, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#e5e7eb'; ctx.fillRect(-5, -9, 10, 2.5);
+      } else {
+        ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, -9); ctx.quadraticCurveTo(7, -18, 12, -12); ctx.quadraticCurveTo(6, -12, 2, -6); ctx.fill();
+      }
+      // Arme
+      if (u.def.projectile) {
+        ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(fx * 5, -3 + fy * 5, r, u.facing - 1.1, u.facing + 1.1); ctx.stroke();
+      } else {
+        const a = u.facing + (u.attackAnim > 0 ? 0.9 : -0.3);
+        ctx.strokeStyle = '#f5f5f4'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * 6, -3 + Math.sin(a) * 6); ctx.lineTo(Math.cos(a) * (r + 12), -3 + Math.sin(a) * (r + 12)); ctx.stroke();
+        ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * 8 - Math.sin(a) * 4, -3 + Math.sin(a) * 8 + Math.cos(a) * 4);
+        ctx.lineTo(Math.cos(a) * 8 + Math.sin(a) * 4, -3 + Math.sin(a) * 8 - Math.cos(a) * 4); ctx.stroke();
+      }
+      break;
+    }
     case 'knight': {
       // Cheval
       ctx.save();
@@ -343,7 +409,23 @@ function drawUnit(ctx, u, selected, hovered) {
   }
   ctx.restore();
 
-  if (selected || hovered || u.hp < u.maxHp) {
+  if (u.buffUntil > (G ? G.time : 0)) {
+    ctx.fillStyle = 'rgba(251,146,60,0.9)';
+    ctx.beginPath(); ctx.moveTo(u.x - 3, u.y - r - 14); ctx.lineTo(u.x + 3, u.y - r - 14); ctx.lineTo(u.x, u.y - r - 19); ctx.fill();
+  }
+  if (u.isHero && G && G.heroes) {
+    const h = G.heroes[u.team];
+    drawHealthBar(ctx, u.x, u.y - r - 11, 40, u.hp / u.maxHp);
+    ctx.font = 'bold 11px Georgia, serif';
+    ctx.textAlign = 'center';
+    const label = `${h.info.name} · Nv ${h.level}`;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    const tw = ctx.measureText(label).width;
+    ctx.fillRect(u.x - tw / 2 - 4, u.y - r - 27, tw + 8, 14);
+    ctx.fillStyle = u.team === PLAYER ? '#fde68a' : '#fca5a5';
+    ctx.fillText(label, u.x, u.y - r - 16);
+    ctx.textAlign = 'start';
+  } else if (selected || hovered || u.hp < u.maxHp) {
     drawHealthBar(ctx, u.x, u.y - r - 9, r * 2 + 4, u.hp / u.maxHp);
   }
 }
@@ -542,6 +624,10 @@ function renderMinimap(mctx, mw, mh, viewW, viewH) {
   }
   for (const u of G.units) {
     if (!isVisibleToPlayer(u)) continue;
+    if (u.isHero) {
+      mctx.fillStyle = '#facc15';
+      mctx.fillRect(u.x * sx - 3.5, u.y * sy - 3.5, 7, 7);
+    }
     mctx.fillStyle = u.team === PLAYER ? TEAM_LIGHT[PLAYER] : TEAM_COLORS[ENEMY];
     mctx.fillRect(u.x * sx - 1.5, u.y * sy - 1.5, 3, 3);
   }
