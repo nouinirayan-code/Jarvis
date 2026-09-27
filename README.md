@@ -15,6 +15,8 @@ Le monde a sombré dans les ténèbres : vous veillez sur **le dernier foyer**.
 
 Aucune dépendance ni compilation : HTML5 Canvas et JavaScript pur.
 
+> 🏝️ Ce dépôt contient aussi **L'Île des Reliques**, un jeu d'aventure pour **Roblox** : voir le dossier [`roblox/`](roblox/README.md).
+
 ## Lancer le jeu
 
 Ouvrez `index.html` dans un navigateur récent, ou lancez un serveur local :
