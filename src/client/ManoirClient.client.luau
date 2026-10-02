@@ -15,6 +15,10 @@ local ContextActionService = game:GetService("ContextActionService")
 local player = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("ManoirRemotes")
 
+local function inRound(): boolean
+	return player:GetAttribute("InRound") == true
+end
+
 local INK = Color3.fromRGB(235, 225, 215)
 local BLOOD = Color3.fromRGB(170, 20, 30)
 local PANEL = Color3.fromRGB(10, 8, 12)
@@ -104,6 +108,61 @@ end
 text({ Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 1, -60), Text = "Tu es caché… Retiens ton souffle. (E pour sortir)", TextSize = 20, ZIndex = 3, Parent = hideView })
 
 ---------------------------------------------------------------------------
+-- SONS
+---------------------------------------------------------------------------
+
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local SoundIds = ReplicatedStorage:WaitForChild("ManoirSons")
+
+local function sid(key: string): string?
+	local v = SoundIds:FindFirstChild(key) :: StringValue?
+	if v and v.Value ~= "" then
+		return v.Value
+	end
+	return nil
+end
+
+local function makeSound(key: string, looped: boolean, volume: number): Sound?
+	local id = sid(key)
+	if not id then
+		return nil
+	end
+	local snd = Instance.new("Sound")
+	snd.Name = "Local_" .. key
+	snd.SoundId = id
+	snd.Looped = looped
+	snd.Volume = volume
+	snd.Parent = SoundService
+	return snd
+end
+
+local function playLocal(key: string, volume: number?, speed: number?)
+	local snd = makeSound(key, false, volume or 1)
+	if snd then
+		snd.PlaybackSpeed = speed or 1
+		snd:Play()
+		Debris:AddItem(snd, 15)
+	end
+end
+
+-- Boucles d'ambiance (volumes ajustés en continu)
+local loops: { [string]: Sound } = {}
+for _, key in { "ambiance", "pluie", "lobby", "respiration" } do
+	local snd = makeSound(key, true, 0)
+	if snd then
+		snd:Play()
+		loops[key] = snd
+	end
+end
+local function fadeLoop(key: string, target: number, dt: number)
+	local snd = loops[key]
+	if snd then
+		snd.Volume += (target - snd.Volume) * math.min(1, dt * 1.5)
+	end
+end
+
+---------------------------------------------------------------------------
 -- HUD
 ---------------------------------------------------------------------------
 
@@ -145,19 +204,46 @@ refreshInventory()
 objective.Text = Remotes:GetAttribute("Objective") or ""
 
 Remotes:WaitForChild("Objective").OnClientEvent:Connect(function(t: string)
+	if not inRound() then
+		return
+	end
 	objective.Text = t
 	objective.TextColor3 = Color3.fromRGB(255, 220, 140)
 	TweenService:Create(objective, TweenInfo.new(1.5), { TextColor3 = INK }):Play()
 end)
 
-Remotes:WaitForChild("Round").OnClientEvent:Connect(function(state: string, seconds: number)
-	if state == "jeu" then
-		timerLabel.Text = string.format("%d:%02d", seconds // 60, seconds % 60)
-		timerLabel.TextColor3 = if seconds < 60 then Color3.fromRGB(255, 40, 40) else Color3.fromRGB(220, 60, 60)
+local CAMP_HELP = "Entre dans le cercle rouge du camp pour participer à la prochaine nuit."
+local function refreshMode()
+	inv.Visible = inRound()
+	if not inRound() then
+		objective.Text = CAMP_HELP
 	else
-		timerLabel.Text = "Nouvelle nuit dans " .. seconds .. " s"
+		objective.Text = Remotes:GetAttribute("Objective") or ""
+	end
+end
+player:GetAttributeChangedSignal("InRound"):Connect(refreshMode)
+
+Remotes:WaitForChild("Round").OnClientEvent:Connect(function(state: string, seconds: number, a: number?, b: number?)
+	timerLabel.TextColor3 = Color3.fromRGB(220, 60, 60)
+	if state == "camp" then
+		if (a or 0) > 0 then
+			timerLabel.Text = string.format("La nuit commence dans %d s  (%d/%d dans le cercle)", seconds, a or 0, b or 0)
+		else
+			timerLabel.Text = "LE CAMP"
+		end
+	elseif state == "jeu" then
+		if inRound() then
+			timerLabel.Text = string.format("%d:%02d", seconds // 60, seconds % 60)
+			timerLabel.TextColor3 = if seconds < 60 then Color3.fromRGB(255, 40, 40) else Color3.fromRGB(220, 60, 60)
+		else
+			timerLabel.Text = string.format("Une nuit est en cours — %d:%02d", seconds // 60, seconds % 60)
+			objective.Text = string.format("%d joueur%s encore dans le manoir. Attends la prochaine nuit au camp.", a or 0, if (a or 0) > 1 then "s" else "")
+		end
+	else
+		timerLabel.Text = "Retour au camp…"
 	end
 end)
+refreshMode()
 
 ---------------------------------------------------------------------------
 -- NOTIFICATIONS
@@ -226,6 +312,7 @@ for i, k in keys do
 	local col, row = (i - 1) % 3, (i - 1) // 3
 	local b = button({ Size = UDim2.fromOffset(70, 54), Position = UDim2.fromOffset(15 + col * 80, 80 + row * 62), Text = k, Font = Enum.Font.GothamBold, ZIndex = 11, Parent = keypad })
 	b.Activated:Connect(function()
+		playLocal("bip", 0.35, if k == "OK" then 0.8 else 1)
 		if k == "✕" then
 			entered = ""
 		elseif k == "OK" then
@@ -258,34 +345,65 @@ local scareGlow = frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLOOD
 local glowGrad = Instance.new("UIGradient")
 glowGrad.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 1), NumberSequenceKeypoint.new(1, 0) })
 glowGrad.Parent = scareGlow
--- Crâne allongé du Veilleur
-local face = frame({ Size = UDim2.fromScale(0.42, 0.8), Position = UDim2.fromScale(0.29, 0.1), BackgroundColor3 = Color3.fromRGB(200, 190, 170), BackgroundTransparency = 0, ZIndex = 51, Parent = scare })
-corner(face, 400)
-local faceShade = Instance.new("UIGradient")
-faceShade.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(230, 222, 200)), ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 60, 55)) })
-faceShade.Rotation = 90
-faceShade.Parent = face
--- Six yeux rouges dans des orbites noires
-local eyeSpots = { { 0.16, 0.24, 0.2 }, { 0.62, 0.24, 0.2 }, { 0.3, 0.12, 0.12 }, { 0.58, 0.11, 0.11 }, { 0.06, 0.4, 0.1 }, { 0.82, 0.41, 0.09 } }
+-- Crâne de Wendigo (dessiné sur une toile de 600 x 1000, agrandie par UIScale)
+local face = frame({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(600, 1000), BackgroundTransparency = 1, ZIndex = 51, Parent = scare })
+local faceScale = Instance.new("UIScale")
+faceScale.Parent = face
+local BONE_UI = Color3.fromRGB(205, 192, 168)
+local function seg(x1: number, y1: number, x2: number, y2: number, thick: number, color: Color3, z: number?)
+	local dx, dy = x2 - x1, y2 - y1
+	frame({
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2),
+		Size = UDim2.fromOffset(thick, math.sqrt(dx * dx + dy * dy) + thick * 0.5), Rotation = math.deg(math.atan2(-dx, dy)),
+		BackgroundColor3 = color, BackgroundTransparency = 0, ZIndex = z or 52, Parent = face,
+	})
+end
+local function blob(x: number, y: number, w: number, h: number, color: Color3, z: number, round: number?): Frame
+	local f = frame({ Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = color, BackgroundTransparency = 0, ZIndex = z, Parent = face })
+	corner(f, round or 200)
+	return f
+end
+-- Bois ramifiés (gauche puis miroir)
+local antlerColor = Color3.fromRGB(110, 92, 70)
+local beams = {
+	{ 215, 330, 160, 250, 26 }, { 160, 250, 115, 165, 22 }, { 115, 165, 70, 95, 18 }, { 70, 95, 35, 20, 13 },
+	{ 160, 250, 205, 165, 14 }, { 205, 165, 225, 110, 10 }, { 115, 165, 160, 85, 12 }, { 160, 85, 170, 35, 9 },
+	{ 70, 95, 95, 25, 10 }, { 140, 205, 55, 200, 12 }, { 55, 200, 15, 160, 9 },
+}
+for _, b in beams do
+	seg(b[1], b[2], b[3], b[4], b[5], antlerColor, 51)
+	seg(600 - b[1], b[2], 600 - b[3], b[4], b[5], antlerColor, 51)
+end
+-- Crâne et long museau
+local cranium = blob(165, 290, 270, 250, BONE_UI, 52, 120)
+local shade = Instance.new("UIGradient")
+shade.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(235, 225, 205)), ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 108, 92)) })
+shade.Rotation = 90
+shade.Parent = cranium
+local snout = blob(215, 480, 170, 440, BONE_UI, 52, 70)
+local shade2 = shade:Clone()
+shade2.Parent = snout
+-- Orbites et yeux rouges
 local scareEyes = {}
-for _, e in eyeSpots do
-	local socket = frame({ Size = UDim2.fromScale(e[3], e[3] * 0.55), Position = UDim2.fromScale(e[1], e[2]), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
-	corner(socket, 100)
-	local iris = frame({ Size = UDim2.fromScale(0.42, 0.6), Position = UDim2.fromScale(0.29, 0.2), BackgroundColor3 = Color3.fromRGB(255, 30, 20), BackgroundTransparency = 0, ZIndex = 53, Parent = socket })
-	corner(iris, 100)
+for _, x in { 185, 325 } do
+	blob(x, 385, 90, 75, Color3.new(0, 0, 0), 53, 60)
+	local iris = blob(x + 30, 405, 30, 30, Color3.fromRGB(255, 30, 20), 54, 20)
 	table.insert(scareEyes, iris)
 end
--- Gueule béante et deux rangées de crocs
-local mouth = frame({ Size = UDim2.fromScale(0.78, 0.42), Position = UDim2.fromScale(0.11, 0.52), BackgroundColor3 = Color3.fromRGB(25, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
-corner(mouth, 80)
-local throat = frame({ Size = UDim2.fromScale(0.4, 0.4), Position = UDim2.fromScale(0.3, 0.32), BackgroundColor3 = Color3.fromRGB(150, 0, 0), BackgroundTransparency = 0.2, ZIndex = 52, Parent = mouth })
-corner(throat, 100)
-text({ Size = UDim2.fromScale(1, 0.32), Position = UDim2.fromScale(0, -0.04), Text = "▼▼▼▼▼▼▼▼▼▼", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.fromRGB(240, 232, 210), ZIndex = 53, Parent = mouth })
-text({ Size = UDim2.fromScale(1, 0.3), Position = UDim2.fromScale(0, 0.74), Text = "▲▲▲▲▲▲▲▲▲▲", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.fromRGB(240, 232, 210), ZIndex = 53, Parent = mouth })
--- Fissures
-for i = 1, 4 do
-	frame({ Size = UDim2.fromScale(0.01, 0.25), Position = UDim2.fromScale(0.2 + i * 0.15, 0.02 + (i % 2) * 0.05), Rotation = (i % 2 == 0) and 25 or -20, BackgroundColor3 = Color3.fromRGB(40, 30, 25), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
+-- Narines, fissures, crocs
+blob(270, 840, 22, 34, Color3.new(0, 0, 0), 53, 12)
+blob(308, 840, 22, 34, Color3.new(0, 0, 0), 53, 12)
+seg(300, 300, 280, 380, 4, Color3.fromRGB(60, 50, 40), 53)
+seg(280, 380, 300, 470, 3, Color3.fromRGB(60, 50, 40), 53)
+seg(390, 330, 420, 420, 3, Color3.fromRGB(60, 50, 40), 53)
+for i = 0, 7 do
+	local y = 560 + i * 42
+	seg(222, y, 200, y + 34, 9, Color3.fromRGB(240, 232, 210), 51)
+	seg(378, y, 400, y + 34, 9, Color3.fromRGB(240, 232, 210), 51)
 end
+-- Lueur rouge de la gueule
+local maw = blob(240, 520, 120, 300, Color3.fromRGB(90, 0, 0), 51, 60)
+maw.BackgroundTransparency = 0.2
 
 -- Effets de post-traitement locaux (n'affectent que ce joueur)
 local Lighting = game:GetService("Lighting")
@@ -301,11 +419,13 @@ local fovKick = 0
 
 Remotes:WaitForChild("Jumpscare").OnClientEvent:Connect(function()
 	scare.Visible = true
-	face.Size = UDim2.fromScale(0.12, 0.22)
-	face.Position = UDim2.fromScale(0.44, 0.4)
+	local viewH = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 800
+	faceScale.Scale = viewH / 1000 * 0.15
+	face.Visible = true
+	playLocal("jumpscare", 2.2)
 	fearBlur.Size = 18
 	fearCC.TintColor = Color3.fromRGB(255, 120, 120)
-	TweenService:Create(face, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Size = UDim2.fromScale(1.1, 1.6), Position = UDim2.fromScale(-0.05, -0.2) }):Play()
+	TweenService:Create(faceScale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = viewH / 1000 * 1.6 }):Play()
 	shakeAmount = 1
 	for i = 1, 18 do
 		face.Rotation = math.random(-7, 7)
@@ -317,7 +437,7 @@ Remotes:WaitForChild("Jumpscare").OnClientEvent:Connect(function()
 	end
 	TweenService:Create(scare, TweenInfo.new(0.8), { BackgroundTransparency = 0 }):Play()
 	task.wait(0.5)
-	face.Size = UDim2.fromScale(0, 0)
+	face.Visible = false
 	task.wait(0.6)
 	scare.Visible = false
 	fearCC.TintColor = Color3.new(1, 1, 1)
@@ -352,6 +472,7 @@ Remotes:WaitForChild("Lightning").OnClientEvent:Connect(function()
 	end
 	-- Le tonnerre gronde un peu plus tard
 	task.wait(0.8 + math.random())
+	playLocal("tonnerre", 0.9, 0.85 + math.random() * 0.3)
 	shakeAmount = math.max(shakeAmount, 0.35)
 end)
 
@@ -360,6 +481,9 @@ local endTitle = text({ Size = UDim2.new(1, 0, 0, 90), Position = UDim2.fromScal
 local endText = text({ Size = UDim2.new(0.8, 0, 0, 60), Position = UDim2.fromScale(0.1, 0.45), TextSize = 24, ZIndex = 41, Parent = endScreen })
 Remotes:WaitForChild("End").OnClientEvent:Connect(function(win: boolean, msg: string)
 	endTitle.Text = if win then "ÉCHAPPÉ !" else "PRIS AU PIÈGE…"
+	if win then
+		playLocal("victoire", 1)
+	end
 	endTitle.TextColor3 = if win then Color3.fromRGB(140, 255, 160) else BLOOD
 	endText.Text = msg
 	endScreen.Visible = true
@@ -484,8 +608,23 @@ RunService.RenderStepped:Connect(function(dt)
 			intensity = math.max(intensity, 0.35)
 		end
 	end
+	local prevCycle = math.floor(heartT)
 	heartT += dt * (1.2 + intensity * 2.5)
 	local beat = (math.max(0, math.sin(heartT * math.pi * 2)) ^ 6)
+	if math.floor(heartT) ~= prevCycle and intensity > 0.18 then
+		playLocal("coeur", 0.25 + intensity * 0.9, 1 + intensity * 0.2)
+	end
+
+	-- Ambiance sonore : manoir ou camp, souffle quand on est essoufflé ou caché près de lui
+	local playing = inRound()
+	fadeLoop("ambiance", if playing then 0.5 else 0, dt)
+	fadeLoop("lobby", if playing then 0 else 0.4, dt)
+	fadeLoop("pluie", if hidden then 0.06 elseif playing then 0.18 else 0.22, dt)
+	fadeLoop("respiration", math.clamp((0.6 - stamina) * 0.9 + (if hidden then intensity * 0.6 else 0), 0, 0.7), dt)
+	local reverb = if hidden then Enum.ReverbType.PaddedCell elseif playing then Enum.ReverbType.StoneCorridor else Enum.ReverbType.Forest
+	if SoundService.AmbientReverb ~= reverb then
+		SoundService.AmbientReverb = reverb
+	end
 	fear.BackgroundTransparency = 1 - intensity * (0.35 + beat * 0.35)
 
 	-- Image : désaturée, contrastée et floue quand il est proche

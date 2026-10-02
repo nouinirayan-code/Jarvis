@@ -2,8 +2,8 @@
 	LE MANOIR DES OMBRES — script serveur
 	À placer dans ServerScriptService (type : Script).
 
-	Construit le manoir au lancement, gère les manches, les énigmes, le monstre
-	(« le Veilleur »), les cachettes et la lampe torche.
+	Construit le camp et le manoir, gère les manches, les énigmes, le monstre
+	(le Wendigo), les cachettes, la lampe torche et les sons.
 	Le script client (ManoirClient) affiche l'interface et les effets d'horreur.
 ]]
 
@@ -13,6 +13,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local PathfindingService = game:GetService("PathfindingService")
+local Debris = game:GetService("Debris")
 
 ---------------------------------------------------------------------------
 -- RÉGLAGES
@@ -35,6 +36,33 @@ local CATCH_RANGE = 5.5
 
 local BATTERY_DRAIN = 1.25 -- % par seconde, lampe allumée
 local WALL_H = 14
+
+local LOBBY_COUNTDOWN = 20 -- secondes avant le départ quand des joueurs sont dans le cercle
+local LOBBY = Vector3.new(0, 0, 560) -- le camp, loin du manoir
+
+-- SONS : importe les fichiers du dossier « sons » dans Roblox Studio (Gestionnaire de ressources),
+-- puis colle ici leurs identifiants (le nombre seul, ou "rbxassetid://123…").
+-- Un son laissé vide est simplement ignoré : le jeu fonctionne quand même.
+local SOUNDS = {
+	ambiance = "", -- bourdon et vent dans le manoir (boucle)
+	pluie = "", -- pluie (boucle)
+	tonnerre = "",
+	coeur = "", -- battement de cœur quand le Wendigo approche
+	hurlement = "", -- cri du Wendigo quand il te repère
+	rale = "", -- souffle et râle du Wendigo (boucle, en 3D sur lui)
+	pas_monstre = "", -- sabots du Wendigo
+	jumpscare = "",
+	ramasser = "",
+	porte = "",
+	armoire = "",
+	bip = "", -- touches du clavier du coffre
+	erreur = "", -- mauvais code
+	deverrouillage = "",
+	courant = "", -- retour de l'électricité
+	lobby = "", -- musique du camp (boucle)
+	victoire = "",
+	respiration = "", -- souffle du joueur essoufflé ou caché (boucle)
+}
 
 ---------------------------------------------------------------------------
 -- OUTILS
@@ -128,6 +156,69 @@ local function surfaceText(p: BasePart, face: Enum.NormalId, text: string, color
 end
 
 ---------------------------------------------------------------------------
+-- SONS
+---------------------------------------------------------------------------
+
+local function soundId(key: string): string?
+	local id = SOUNDS[key]
+	if not id or id == "" then
+		return nil
+	end
+	if tonumber(id) then
+		return "rbxassetid://" .. id
+	end
+	return id
+end
+
+-- Les identifiants sont partagés avec le client (sons d'ambiance, cœur, jumpscare…)
+local SoundFolder = Instance.new("Folder")
+SoundFolder.Name = "ManoirSons"
+for key in SOUNDS do
+	local v = Instance.new("StringValue")
+	v.Name = key
+	v.Value = soundId(key) or ""
+	v.Parent = SoundFolder
+end
+SoundFolder.Parent = ReplicatedStorage
+
+local function playSound(key: string, parent: Instance, volume: number?, maxDist: number?, speed: number?): Sound?
+	local id = soundId(key)
+	if not id then
+		return nil
+	end
+	local snd = Instance.new("Sound")
+	snd.Name = "Son_" .. key
+	snd.SoundId = id
+	snd.Volume = volume or 1
+	snd.RollOffMode = Enum.RollOffMode.InverseTapered
+	snd.RollOffMinDistance = 8
+	snd.RollOffMaxDistance = maxDist or 80
+	snd.PlaybackSpeed = speed or 1
+	snd.Parent = parent
+	snd:Play()
+	Debris:AddItem(snd, 12)
+	return snd
+end
+
+local function playAt(key: string, pos: Vector3, volume: number?, maxDist: number?, speed: number?)
+	if not soundId(key) then
+		return
+	end
+	local anchor = Instance.new("Part")
+	anchor.Name = "SourceSonore"
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+	anchor.CFrame = CFrame.new(pos)
+	anchor.Parent = workspace
+	playSound(key, anchor, volume, maxDist, speed)
+	Debris:AddItem(anchor, 12)
+end
+
+---------------------------------------------------------------------------
 -- AMBIANCE
 ---------------------------------------------------------------------------
 
@@ -210,6 +301,8 @@ type Round = {
 	code: string,
 	clockText: string,
 	escaped: { [Player]: boolean },
+	participants: { [Player]: boolean },
+	out: { [Player]: boolean },
 	catches: number,
 	roomLights: { PointLight },
 	officeDoor: BasePart?,
@@ -437,6 +530,7 @@ local function makeWardrobe(pos: Vector3, rotY: number)
 			-- Sortir
 			w.occupant = nil
 			wardrobeOf[player] = nil
+			playSound("armoire", handle, 0.8, 40)
 			hrp.Anchored = false
 			char:PivotTo(w.outside)
 			hum.WalkSpeed = WALK_SPEED
@@ -445,6 +539,7 @@ local function makeWardrobe(pos: Vector3, rotY: number)
 		elseif w.occupant == nil and not wardrobeOf[player] then
 			w.occupant = player
 			wardrobeOf[player] = w
+			playSound("armoire", handle, 0.8, 40)
 			char:PivotTo(w.inside)
 			hrp.Anchored = true
 			hum.WalkSpeed = 0
@@ -491,6 +586,7 @@ local function pickup(name: string, pos: Vector3, color: Color3, action: string,
 			return
 		end
 		taken = true
+		playAt("ramasser", item.Position, 0.7, 30)
 		item:Destroy()
 		onTake(player)
 	end)
@@ -537,6 +633,7 @@ local function powerOn()
 	end
 	if round.officeDoor then
 		local door = round.officeDoor
+		playSound("porte", door, 1.2, 90)
 		TweenService:Create(door, TweenInfo.new(1.2), { CFrame = door.CFrame * CFrame.new(7.5, 0, 0) }):Play()
 		task.delay(1.2, function()
 			door.CanCollide = false
@@ -550,6 +647,7 @@ local function openSafe(player: Player)
 	round.safeOpen = true
 	if round.safeDoor then
 		local d = round.safeDoor
+		playSound("deverrouillage", d, 1, 50)
 		TweenService:Create(d, TweenInfo.new(0.8), { CFrame = d.CFrame * CFrame.new(-1.6, 0, -1.6) * CFrame.Angles(0, math.rad(-90), 0) }):Play()
 	end
 	notify(nil, player.DisplayName .. " a ouvert le coffre-fort !", Color3.fromRGB(255, 220, 110))
@@ -712,16 +810,6 @@ local function buildManor()
 	end
 
 	-- HALL ---------------------------------------------------------------
-	local spawn = Instance.new("SpawnLocation")
-	spawn.Name = "Apparition"
-	spawn.Anchored = true
-	spawn.Size = Vector3.new(8, 0.4, 8)
-	spawn.CFrame = CFrame.new(HALL_SPAWN.X, 0.45, HALL_SPAWN.Z)
-	spawn.Color = Color3.fromRGB(90, 30, 30)
-	spawn.Material = Enum.Material.Carpet
-	spawn.Duration = 0
-	spawn.Neutral = true
-	spawn.Parent = Manor
 	box("Estrade", Vector3.new(14, 1, 8), Vector3.new(0, 0, 22), Color3.fromRGB(70, 45, 30), Enum.Material.WoodPlanks)
 	box("Statue", Vector3.new(3, 8, 3), Vector3.new(0, 1, 22), Color3.fromRGB(150, 150, 145), Enum.Material.Marble)
 	box("Console", Vector3.new(6, 3, 2), Vector3.new(-20, 0, 50), Color3.fromRGB(60, 38, 24))
@@ -746,6 +834,10 @@ local function buildManor()
 		end
 		round.doorOpen = true
 		frontPrompt.Enabled = false
+		playSound("deverrouillage", front, 1.2, 80)
+		task.delay(0.4, function()
+			playSound("porte", front, 1.8, 140, 0.8)
+		end)
 		TweenService:Create(front, TweenInfo.new(1.5), { CFrame = front.CFrame * CFrame.new(0, 12, 0) }):Play()
 		task.delay(1, function()
 			front.CanCollide = false
@@ -762,12 +854,17 @@ local function buildManor()
 		end
 		round.escaped[player] = true
 		player:SetAttribute("Escaped", true)
+		local ls = player:FindFirstChild("leaderstats")
+		local ev = ls and ls:FindFirstChild("Évasions") :: IntValue?
+		if ev then
+			ev.Value += 1
+		end
 		local char = player.Character
 		if char then
 			char:PivotTo(CFrame.new(SAFE_ZONE + Vector3.new(math.random(-8, 8), 0, math.random(-8, 8))))
 		end
 		notify(nil, player.DisplayName .. " s'est échappé du manoir !", Color3.fromRGB(140, 255, 160))
-		EndRemote:FireClient(player, true, "Tu t'es échappé du Manoir des Ombres !")
+		EndRemote:FireClient(player, true, "Tu t'es échappé du Manoir des Ombres ! Retour au camp à la fin de la nuit.")
 	end)
 
 	-- SALON --------------------------------------------------------------
@@ -909,6 +1006,7 @@ local function buildManor()
 			return
 		end
 		voyant.Color = Color3.fromRGB(60, 255, 90)
+		playSound("courant", fusebox, 1.4, 160)
 		fusePrompt.Enabled = false
 		powerOn()
 	end)
@@ -940,9 +1038,12 @@ local monster = {
 	t = 0,
 	phase = 0,
 	lean = nil :: number?,
+	skull = nil :: BasePart?,
+	hoof = nil :: BasePart?,
+	lastStep = 0,
 }
 
-local MONSTER_HEIGHT = 5.4 -- hauteur des hanches au-dessus du sol
+local MONSTER_HEIGHT = 6.6 -- hauteur des hanches au-dessus du sol (jambes de cerf)
 
 -- Squelette articulé : chaque pièce appartient à un « groupe » animé par le script
 type RigPart = { part: BasePart, group: string, offset: CFrame }
@@ -952,9 +1053,45 @@ local rigCFrames: { CFrame } = {}
 local eyeParts: { BasePart } = {}
 local headTwitch = { yaw = 0, roll = 0, pitch = 0, next = 0 }
 
-local SKIN = Color3.fromRGB(28, 24, 27)
-local BONE = Color3.fromRGB(168, 156, 134)
+local SKIN = Color3.fromRGB(80, 74, 68) -- peau grise de cadavre
+local SKIN_DARK = Color3.fromRGB(58, 50, 46)
+local BONE = Color3.fromRGB(182, 170, 148)
+local FUR = Color3.fromRGB(26, 22, 20)
+local ANTLER = Color3.fromRGB(96, 80, 62)
+local HOOF = Color3.fromRGB(18, 16, 15)
 local EYE = Color3.fromRGB(255, 18, 8)
+
+-- Portes du manoir : le Wendigo se baisse pour passer dessous
+local DOORS = {
+	Vector3.new(-51, 0, -6), Vector3.new(-2, 0, -6), Vector3.new(52, 0, -6),
+	Vector3.new(-54, 0, 6), Vector3.new(0, 0, 6), Vector3.new(54, 0, 6),
+	Vector3.new(-30, 0, -36), Vector3.new(25, 0, -26), Vector3.new(-28, 0, 34),
+	Vector3.new(64, 0, -60), Vector3.new(0, 0, 60),
+}
+
+-- Grands bois ramifiés (utilisés par le Wendigo et par le totem du camp)
+local function buildAntler(add: (CFrame, { [string]: any }) -> (), base: CFrame, side: number)
+	local seg = base
+	for i = 1, 5 do
+		local len = 1.15 - i * 0.07
+		local thick = 0.3 - i * 0.035
+		-- Vers le haut, vers l'extérieur (roulis) et un peu vers l'arrière (tangage positif)
+		seg = seg * CFrame.Angles(math.rad(6 + i * 2), math.rad(side * 4), math.rad(if i == 1 then side * -16 else side * -5))
+		add(seg * CFrame.new(0, len / 2, 0), { Name = "Bois", Size = Vector3.new(thick, len, thick), Color = ANTLER, Material = Enum.Material.Wood })
+		seg = seg * CFrame.new(0, len, 0)
+		-- Andouillers qui pointent vers le haut et l'avant
+		if i >= 2 then
+			local tine = seg * CFrame.Angles(math.rad(-48), 0, math.rad(side * (10 - i * 4)))
+			for k = 1, 2 do
+				local tl = 0.85 - k * 0.2 - i * 0.04
+				tine = tine * CFrame.Angles(math.rad(14), 0, 0)
+				add(tine * CFrame.new(0, tl / 2, 0), { Name = "Andouiller", Size = Vector3.new(thick * 0.7, tl, thick * 0.7), Color = ANTLER, Material = Enum.Material.Wood })
+				tine = tine * CFrame.new(0, tl, 0)
+			end
+		end
+	end
+	add(seg * CFrame.Angles(math.rad(-20), 0, 0) * CFrame.new(0, 0.3, 0), { Name = "PointeBois", Size = Vector3.new(0.12, 0.6, 0.12), Color = Color3.fromRGB(150, 135, 110), Material = Enum.Material.Wood })
+end
 
 local function buildMonster(): Model
 	local m = Instance.new("Model")
@@ -977,111 +1114,103 @@ local function buildMonster(): Model
 		return p
 	end
 
-	-- Torse décharné, côtes et colonne hérissée
-	local root = add("body", CFrame.new(0, 2, 0), { Name = "Torse", Size = Vector3.new(2.4, 4.2, 1.5), Color = SKIN, Material = Enum.Material.Slate })
-	add("body", CFrame.new(0, 0.1, 0), { Name = "Bassin", Size = Vector3.new(2, 1.2, 1.3), Color = SKIN, Material = Enum.Material.Slate })
-	for i = 0, 5 do
-		local y = 1.2 + i * 0.5
-		add("body", CFrame.new(0, y, -0.78), { Name = "Cote", Size = Vector3.new(2.2 - math.abs(i - 2.5) * 0.15, 0.16, 0.12), Color = BONE, Material = Enum.Material.Limestone })
-	end
-	add("body", CFrame.new(0, 2.4, -0.8), { Name = "Sternum", Size = Vector3.new(0.3, 2.6, 0.14), Color = BONE, Material = Enum.Material.Limestone })
-	for i = 0, 5 do
-		add("body", CFrame.new(0, 0.6 + i * 0.7, 0.85) * CFrame.Angles(math.rad(35), 0, 0), {
-			ClassName = "WedgePart", Name = "Epine", Size = Vector3.new(0.25, 0.9 - i * 0.05, 0.7), Color = BONE, Material = Enum.Material.Limestone,
-		})
-	end
-	-- Bosse et lambeaux qui pendent du dos
-	add("body", CFrame.new(0, 3.2, 0.7), { Name = "Bosse", Shape = Enum.PartType.Ball, Size = Vector3.one * 2.6, Color = SKIN, Material = Enum.Material.Slate })
+	-- Torse squelettique : cage thoracique saillante, taille creusée, vertèbres
+	local root = add("body", CFrame.new(0, 3.1, 0), { Name = "Torse", Size = Vector3.new(2.1, 2.3, 1.15), Color = SKIN, Material = Enum.Material.Slate })
+	add("body", CFrame.new(0, 1.35, 0), { Name = "Taille", Size = Vector3.new(1.15, 1.6, 0.75), Color = SKIN_DARK, Material = Enum.Material.Slate })
+	add("body", CFrame.new(0, 0.25, 0), { Name = "Bassin", Size = Vector3.new(1.6, 0.8, 1), Color = SKIN, Material = Enum.Material.Slate })
 	for i = 0, 6 do
-		local x = -1.3 + i * 0.43
-		local len = 2.2 + (i * 37 % 7) * 0.35
-		add("body", CFrame.new(x, 3.4 - len / 2, 0.9 + math.abs(x) * 0.15) * CFrame.Angles(math.rad(8 + (i % 3) * 6), 0, math.rad((i - 3) * 4)), {
-			Name = "Lambeau", Size = Vector3.new(0.38, len, 0.06), Color = Color3.fromRGB(12, 10, 12), Material = Enum.Material.Fabric, Transparency = 0.1,
-		})
+		local y = 2.15 + i * 0.3
+		add("body", CFrame.new(0, y, -0.6), { Name = "Cote", Size = Vector3.new(2.15 - math.abs(i - 3) * 0.12, 0.13, 0.12), Color = BONE, Material = Enum.Material.Limestone })
 	end
-	-- Cou et crâne allongé
-	add("neck", CFrame.new(0, 0.7, -0.1), { Name = "Cou", Size = Vector3.new(0.6, 1.6, 0.6), Color = SKIN, Material = Enum.Material.Slate })
-	local skull = add("neck", CFrame.new(0, 1.9, -0.6), { Name = "Crane", Size = Vector3.new(1.7, 1.5, 2.6), Color = BONE, Material = Enum.Material.Limestone })
-	add("neck", CFrame.new(0, 2.55, 0.1), { Name = "Crete", Size = Vector3.new(0.9, 0.5, 2.2), Color = Color3.fromRGB(160, 150, 130), Material = Enum.Material.Limestone })
-	-- Arcade sourcilière et cavité nasale
-	add("neck", CFrame.new(0, 2.75, -1.55) * CFrame.Angles(math.rad(-20), 0, 0), { Name = "Arcade", Size = Vector3.new(1.9, 0.35, 0.6), Color = Color3.fromRGB(120, 110, 95), Material = Enum.Material.Limestone })
-	add("neck", CFrame.new(0, 1.6, -1.92), { Name = "Nez", Size = Vector3.new(0.35, 0.45, 0.1), Color = Color3.new(0, 0, 0) })
-	-- Cornes recourbées vers l'arrière
+	add("body", CFrame.new(0, 3.0, -0.63), { Name = "Sternum", Size = Vector3.new(0.25, 2.1, 0.12), Color = BONE, Material = Enum.Material.Limestone })
+	for i = 0, 7 do
+		local y = 0.6 + i * 0.5
+		add("body", CFrame.new(0, y, 0.48), { Name = "Vertebre", Size = Vector3.new(0.34, 0.26, 0.34), Color = BONE, Material = Enum.Material.Limestone })
+		add("body", CFrame.new(0, y, 0.72) * CFrame.Angles(math.rad(40), 0, 0), { ClassName = "WedgePart", Name = "Epine", Size = Vector3.new(0.14, 0.45, 0.35), Color = BONE, Material = Enum.Material.Limestone })
+	end
 	for _, sx in { -1, 1 } do
-		local base = CFrame.new(sx * 0.6, 2.6, 0.5)
-		local seg = base
-		for k = 1, 4 do
-			local len = 1.3 - k * 0.18
-			seg = seg * CFrame.Angles(math.rad(-38), 0, math.rad(sx * -8)) * CFrame.new(0, len / 2, 0)
-			add("neck", seg, { Name = "Corne", Size = Vector3.new(0.42 - k * 0.07, len, 0.42 - k * 0.07), Color = Color3.fromRGB(40, 34, 30), Material = Enum.Material.Basalt })
-			seg = seg * CFrame.new(0, len / 2, 0)
-		end
+		add("body", CFrame.new(sx * 0.6, 3.5, 0.58) * CFrame.Angles(0, 0, math.rad(sx * 12)), { Name = "Omoplate", Size = Vector3.new(0.8, 1.1, 0.14), Color = SKIN_DARK, Material = Enum.Material.Slate })
 	end
-	-- Longs crocs qui dépassent
-	for _, sx in { -1, 1 } do
-		add("neck", CFrame.new(sx * 0.55, 0.75, -1.85) * CFrame.Angles(math.rad(180), 0, 0), {
-			ClassName = "WedgePart", Name = "GrandCroc", Size = Vector3.new(0.16, 1.2, 0.25), Color = Color3.fromRGB(240, 235, 215), Material = Enum.Material.Limestone,
+	-- Crinière de poils noirs autour des épaules et du cou
+	for i = 0, 15 do
+		local a = (i / 15 - 0.5) * math.pi * 1.4
+		local len = 1.2 + (i * 53 % 9) * 0.12
+		local pos = Vector3.new(math.sin(a) * 1.05, 4.0, math.cos(a) * 0.55)
+		add("body", CFrame.new(pos) * CFrame.Angles(math.rad(25 + (i % 3) * 10), a, math.rad((i % 2 == 0) and 12 or -12)) * CFrame.new(0, -len / 2 + 0.3, 0), {
+			Name = "Poil", Size = Vector3.new(0.22, len, 0.05), Color = FUR, Material = Enum.Material.Fabric,
 		})
-	end
-	-- Six yeux rouges, de tailles différentes
-	local eyeSpots = { { -0.55, 2.15, -1.85, 0.32 }, { 0.55, 2.15, -1.85, 0.32 }, { -0.35, 2.5, -1.7, 0.2 }, { 0.38, 2.48, -1.7, 0.22 }, { -0.72, 1.82, -1.6, 0.18 }, { 0.7, 1.85, -1.6, 0.16 } }
-	for _, e in eyeSpots do
-		add("neck", CFrame.new(e[1], e[2], e[3] - 0.05), { Name = "Orbite", Shape = Enum.PartType.Ball, Size = Vector3.one * (e[4] + 0.18), Color = Color3.new(0, 0, 0) })
-		local eye = add("neck", CFrame.new(e[1], e[2], e[3] - 0.22), { Name = "Oeil", Shape = Enum.PartType.Ball, Size = Vector3.one * e[4], Color = EYE, Material = Enum.Material.Neon })
-		table.insert(eyeParts, eye)
-	end
-	-- Mâchoire supérieure et crocs
-	for i = 0, 5 do
-		local x = -0.62 + i * 0.25
-		add("neck", CFrame.new(x, 1.15, -1.75) * CFrame.Angles(math.rad(180), 0, 0), {
-			ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.12, 0.55 + (i % 2) * 0.25, 0.18), Color = Color3.fromRGB(235, 228, 205), Material = Enum.Material.Limestone,
-		})
-	end
-	local mouthGlow = add("neck", CFrame.new(0, 1.05, -1.2), { Name = "Gorge", Size = Vector3.new(1.1, 0.4, 1), Color = Color3.fromRGB(120, 0, 0), Material = Enum.Material.Neon })
-	-- Mâchoire inférieure (s'ouvre)
-	add("jaw", CFrame.new(0, -0.2, -0.9), { Name = "Machoire", Size = Vector3.new(1.4, 0.35, 2), Color = BONE, Material = Enum.Material.Limestone })
-	for i = 0, 5 do
-		local x = -0.62 + i * 0.25
-		add("jaw", CFrame.new(x, 0.2, -1.75), {
-			ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.12, 0.5 + ((i + 1) % 2) * 0.2, 0.18), Color = Color3.fromRGB(235, 228, 205), Material = Enum.Material.Limestone,
-		})
-	end
-	-- Bras démesurés
-	for _, side in { "L", "R" } do
-		local s = if side == "L" then -1 else 1
-		add("arm" .. side, CFrame.new(0, -2, 0), { Name = "Bras", Size = Vector3.new(0.65, 4.2, 0.65), Color = SKIN, Material = Enum.Material.Slate })
-		add("arm" .. side, CFrame.new(0, 0, 0), { Name = "Epaule", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.1, Color = BONE, Material = Enum.Material.Limestone })
-		add("fore" .. side, CFrame.new(0, -2.3, 0), { Name = "AvantBras", Size = Vector3.new(0.5, 4.6, 0.5), Color = SKIN, Material = Enum.Material.Slate })
-		add("fore" .. side, CFrame.new(0, -4.8, -0.1), { Name = "Main", Size = Vector3.new(0.8, 0.6, 0.9), Color = SKIN, Material = Enum.Material.Slate })
-		for k = 0, 3 do
-			local x = (-0.36 + k * 0.24) * s
-			add("fore" .. side, CFrame.new(x, -5.1, -0.35) * CFrame.Angles(math.rad(-25), 0, 0), { Name = "Doigt", Size = Vector3.new(0.14, 1.1, 0.14), Color = SKIN, Material = Enum.Material.Slate })
-			add("fore" .. side, CFrame.new(x, -6.3, -0.95) * CFrame.Angles(math.rad(-35), 0, 0), {
-				ClassName = "WedgePart", Name = "Griffe", Size = Vector3.new(0.1, 2.2 - math.abs(k - 1.5) * 0.3, 0.26), Color = Color3.fromRGB(25, 22, 20), Material = Enum.Material.Basalt,
-			})
-		end
-		-- Jambes aux genoux inversés
-		add("leg" .. side, CFrame.new(0, -1.4, 0), { Name = "Cuisse", Size = Vector3.new(0.85, 2.9, 0.85), Color = SKIN, Material = Enum.Material.Slate })
-		add("shin" .. side, CFrame.new(0, -1.4, 0), { Name = "Tibia", Size = Vector3.new(0.6, 2.9, 0.6), Color = SKIN, Material = Enum.Material.Slate })
-		add("shin" .. side, CFrame.new(0, -2.95, -0.55), { Name = "Pied", Size = Vector3.new(0.7, 0.35, 1.6), Color = SKIN, Material = Enum.Material.Slate })
-		for k = -1, 1, 2 do
-			add("shin" .. side, CFrame.new(k * 0.22, -2.95, -1.5) * CFrame.Angles(math.rad(-90), 0, 0), {
-				ClassName = "WedgePart", Name = "Ergot", Size = Vector3.new(0.12, 0.7, 0.25), Color = Color3.fromRGB(30, 26, 22), Material = Enum.Material.Basalt,
-			})
-		end
 	end
 
-	-- Lueurs et fumée
-	local eyeLight = light(skull, EYE, 14, 1.4)
+	-- Cou et crâne de cerf
+	add("neck", CFrame.new(0, 0.8, -0.15) * CFrame.Angles(math.rad(-15), 0, 0), { Name = "Cou", Size = Vector3.new(0.5, 1.8, 0.5), Color = SKIN, Material = Enum.Material.Slate })
+	local skull = add("neck", CFrame.new(0, 1.85, -0.45), { Name = "Crane", Size = Vector3.new(1.25, 1.05, 1.35), Color = BONE, Material = Enum.Material.Limestone })
+	add("neck", CFrame.new(0, 1.55, -1.65) * CFrame.Angles(math.rad(8), 0, 0), { Name = "Museau", Size = Vector3.new(0.72, 0.58, 1.9), Color = BONE, Material = Enum.Material.Limestone })
+	add("neck", CFrame.new(0, 1.4, -2.62) * CFrame.Angles(math.rad(8), 0, 0), { Name = "BoutMuseau", Size = Vector3.new(0.55, 0.42, 0.4), Color = Color3.fromRGB(160, 148, 126), Material = Enum.Material.Limestone })
+	for _, sx in { -1, 1 } do
+		add("neck", CFrame.new(sx * 0.13, 1.47, -2.84), { Name = "Narine", Size = Vector3.new(0.12, 0.16, 0.06), Color = Color3.new(0, 0, 0) })
+		add("neck", CFrame.new(sx * 0.5, 1.55, -1.0), { Name = "Pommette", Size = Vector3.new(0.24, 0.34, 0.95), Color = Color3.fromRGB(150, 138, 118), Material = Enum.Material.Limestone })
+		-- Orbites vides où brillent deux yeux rouges
+		add("neck", CFrame.new(sx * 0.48, 1.98, -0.98), { Name = "Orbite", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.5, Color = Color3.new(0, 0, 0) })
+		local eye = add("neck", CFrame.new(sx * 0.48, 1.98, -1.2), { Name = "Oeil", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.2, Color = EYE, Material = Enum.Material.Neon })
+		table.insert(eyeParts, eye)
+		-- Crocs de la mâchoire supérieure
+		for k = 0, 4 do
+			add("neck", CFrame.new(sx * 0.27, 1.2, -1.1 - k * 0.36) * CFrame.Angles(math.rad(180), 0, 0), {
+				ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.09, 0.32 + (k % 2) * 0.16, 0.14), Color = Color3.fromRGB(225, 215, 190), Material = Enum.Material.Limestone,
+			})
+		end
+	end
+	local mouthGlow = add("neck", CFrame.new(0, 1.3, -1.55), { Name = "Gorge", Size = Vector3.new(0.45, 0.2, 1.4), Color = Color3.fromRGB(110, 0, 0), Material = Enum.Material.Neon })
+	-- Mâchoire inférieure (s'ouvre)
+	add("jaw", CFrame.new(0, -0.08, -1.0), { Name = "Machoire", Size = Vector3.new(0.58, 0.2, 1.95), Color = BONE, Material = Enum.Material.Limestone })
+	for _, sx in { -1, 1 } do
+		for k = 0, 3 do
+			add("jaw", CFrame.new(sx * 0.22, 0.12, -0.6 - k * 0.38), {
+				ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.08, 0.28 + ((k + 1) % 2) * 0.12, 0.13), Color = Color3.fromRGB(225, 215, 190), Material = Enum.Material.Limestone,
+			})
+		end
+	end
+	-- Les bois
+	for _, sx in { -1, 1 } do
+		buildAntler(function(cf, props)
+			add("neck", cf, props)
+		end, CFrame.new(sx * 0.42, 2.3, -0.25), sx)
+	end
+
+	-- Bras interminables et doigts griffus
+	for _, side in { "L", "R" } do
+		local sgn = if side == "L" then -1 else 1
+		add("arm" .. side, CFrame.new(0, 0, 0), { Name = "Epaule", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.75, Color = BONE, Material = Enum.Material.Limestone })
+		add("arm" .. side, CFrame.new(0, -2.2, 0), { Name = "Bras", Size = Vector3.new(0.42, 4.4, 0.42), Color = SKIN, Material = Enum.Material.Slate })
+		add("fore" .. side, CFrame.new(0, 0, 0), { Name = "Coude", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.5, Color = SKIN_DARK, Material = Enum.Material.Slate })
+		add("fore" .. side, CFrame.new(0, -2.4, 0), { Name = "AvantBras", Size = Vector3.new(0.36, 4.8, 0.36), Color = SKIN, Material = Enum.Material.Slate })
+		add("fore" .. side, CFrame.new(0, -4.95, -0.1), { Name = "Main", Size = Vector3.new(0.6, 0.42, 0.62), Color = SKIN_DARK, Material = Enum.Material.Slate })
+		for k = 0, 3 do
+			local x = (-0.24 + k * 0.16) * sgn
+			add("fore" .. side, CFrame.new(x, -5.65, -0.35) * CFrame.Angles(math.rad(-22), 0, 0), { Name = "Doigt", Size = Vector3.new(0.09, 1.35, 0.09), Color = SKIN_DARK, Material = Enum.Material.Slate })
+			add("fore" .. side, CFrame.new(x, -6.6, -0.78) * CFrame.Angles(math.rad(-38), 0, 0), {
+				ClassName = "WedgePart", Name = "Griffe", Size = Vector3.new(0.07, 1.1 - math.abs(k - 1.5) * 0.15, 0.18), Color = HOOF, Material = Enum.Material.Basalt,
+			})
+		end
+		-- Jambes de cerf : cuisse, tibia, canon et sabot
+		add("leg" .. side, CFrame.new(0, -1.5, 0), { Name = "Cuisse", Size = Vector3.new(0.58, 3.0, 0.58), Color = SKIN, Material = Enum.Material.Slate })
+		add("shin" .. side, CFrame.new(0, -1.5, 0), { Name = "Tibia", Size = Vector3.new(0.38, 3.0, 0.38), Color = SKIN, Material = Enum.Material.Slate })
+		local ankle = CFrame.new(0, -3.0, 0) * CFrame.Angles(math.rad(70), 0, 0)
+		add("shin" .. side, ankle * CFrame.new(0, -0.75, 0), { Name = "Canon", Size = Vector3.new(0.3, 1.5, 0.3), Color = SKIN_DARK, Material = Enum.Material.Slate })
+		add("shin" .. side, ankle * CFrame.new(0, -1.62, -0.05), { Name = "Sabot", Size = Vector3.new(0.46, 0.36, 0.56), Color = HOOF, Material = Enum.Material.Basalt })
+	end
+
+	-- Lueurs, fumée, bave
+	local eyeLight = light(skull, EYE, 12, 1.2)
 	eyeLight.Shadows = false
-	local throat = light(mouthGlow, Color3.fromRGB(200, 20, 10), 8, 0.6)
+	local throat = light(mouthGlow, Color3.fromRGB(200, 20, 10), 6, 0.5)
 	throat.Shadows = false
 	local smoke = Instance.new("ParticleEmitter")
 	smoke.Color = ColorSequence.new(Color3.fromRGB(8, 6, 10))
-	smoke.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.5), NumberSequenceKeypoint.new(1, 5) })
-	smoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) })
+	smoke.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 4) })
+	smoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 1) })
 	smoke.Lifetime = NumberRange.new(1.2, 2)
-	smoke.Rate = 22
+	smoke.Rate = 16
 	smoke.Speed = NumberRange.new(0.3, 1.2)
 	smoke.SpreadAngle = Vector2.new(180, 180)
 	smoke.RotSpeed = NumberRange.new(-40, 40)
@@ -1089,14 +1218,30 @@ local function buildMonster(): Model
 	local drip = Instance.new("ParticleEmitter")
 	drip.Name = "Bave"
 	drip.Color = ColorSequence.new(Color3.fromRGB(120, 10, 10))
-	drip.Size = NumberSequence.new(0.12)
+	drip.Size = NumberSequence.new(0.1)
 	drip.Lifetime = NumberRange.new(0.6, 0.9)
-	drip.Rate = 6
+	drip.Rate = 5
 	drip.Speed = NumberRange.new(0, 0.5)
 	drip.Acceleration = Vector3.new(0, -30, 0)
 	drip.LightEmission = 0.3
 	drip.Parent = mouthGlow
-	m:SetAttribute("Jaw", 0)
+
+	-- Souffle rauque en boucle, audible en 3D
+	local growlId = soundId("rale")
+	if growlId then
+		local growl = Instance.new("Sound")
+		growl.Name = "Rale"
+		growl.SoundId = growlId
+		growl.Looped = true
+		growl.Volume = 1.3
+		growl.RollOffMode = Enum.RollOffMode.InverseTapered
+		growl.RollOffMinDistance = 6
+		growl.RollOffMaxDistance = 75
+		growl.Parent = skull
+		growl:Play()
+	end
+	monster.skull = skull
+	monster.hoof = rigParts[#rigParts]
 	m.PrimaryPart = root
 	m.Parent = Manor
 	return m
@@ -1115,7 +1260,15 @@ local function animateMonster(dt: number, now: number)
 	local ph = monster.phase
 
 	-- Posture qui change en douceur
-	local targetLean = if chasing then math.rad(68) elseif feasting then math.rad(75) else math.rad(42)
+	local targetLean = if chasing then math.rad(68) elseif feasting then math.rad(75) else math.rad(50)
+	-- Il se baisse pour passer sous les portes
+	for _, d in DOORS do
+		local dx, dz = d.X - monster.pos.X, d.Z - monster.pos.Z
+		if dx * dx + dz * dz < 30 then
+			targetLean += math.rad(24)
+			break
+		end
+	end
 	monster.lean = (monster.lean or targetLean) + (targetLean - (monster.lean or targetLean)) * math.min(1, dt * 4)
 	local lean = monster.lean
 
@@ -1136,8 +1289,8 @@ local function animateMonster(dt: number, now: number)
 
 	local G: { [string]: CFrame } = {}
 	G.body = CFrame.new(0, bob, 0) * CFrame.Angles(-lean, 0, swing * 0.08)
-	G.neck = G.body * CFrame.new(0, 4.1, -0.3) * CFrame.Angles(lean * 0.85 + headTwitch.pitch, headTwitch.yaw, headTwitch.roll)
-	G.jaw = G.neck * CFrame.new(0, 1.1, -0.5) * CFrame.Angles(jaw, 0, 0)
+	G.neck = G.body * CFrame.new(0, 4.2, -0.15) * CFrame.Angles(lean * 0.85 + headTwitch.pitch, headTwitch.yaw, headTwitch.roll)
+	G.jaw = G.neck * CFrame.new(0, 1.25, -0.6) * CFrame.Angles(jaw * 0.8, 0, 0)
 	for _, side in { "L", "R" } do
 		local s = if side == "L" then -1 else 1
 		local sw = if side == "L" then swing else swing2
@@ -1153,11 +1306,11 @@ local function animateMonster(dt: number, now: number)
 			armPitch = lean * 0.75 + sw * 0.35
 			elbow = 0.25 + math.sin(now * 1.3 + s) * 0.08
 		end
-		G["arm" .. side] = G.body * CFrame.new(s * 1.6, 3.6, -0.1) * CFrame.Angles(armPitch, 0, s * 0.18)
-		G["fore" .. side] = G["arm" .. side] * CFrame.new(0, -4.1, 0) * CFrame.Angles(elbow, 0, 0)
-		local thigh = 0.45 + sw * (if chasing then 0.75 else 0.45)
-		G["leg" .. side] = CFrame.new(s * 0.75, bob, 0) * CFrame.Angles(thigh, 0, 0)
-		G["shin" .. side] = G["leg" .. side] * CFrame.new(0, -2.8, 0) * CFrame.Angles(-0.95 - math.max(0, sw) * 0.4, 0, 0)
+		G["arm" .. side] = G.body * CFrame.new(s * 1.25, 3.9, -0.05) * CFrame.Angles(armPitch, 0, s * 0.14)
+		G["fore" .. side] = G["arm" .. side] * CFrame.new(0, -4.4, 0) * CFrame.Angles(elbow, 0, 0)
+		local thigh = 0.45 + sw * (if chasing then 0.7 else 0.4)
+		G["leg" .. side] = CFrame.new(s * 0.55, bob, 0) * CFrame.Angles(thigh, 0, 0)
+		G["shin" .. side] = G["leg" .. side] * CFrame.new(0, -3.0, 0) * CFrame.Angles(-0.95 - math.max(0, sw) * 0.4, 0, 0)
 	end
 
 	local tremor = CFrame.Angles(0, 0, math.sin(now * 23) * 0.012)
@@ -1166,6 +1319,17 @@ local function animateMonster(dt: number, now: number)
 		rigCFrames[i] = rootCF * (G[r.group] or CFrame.identity) * r.offset
 	end
 	workspace:BulkMoveTo(rigParts, rigCFrames, Enum.BulkMoveMode.FireCFrameChanged)
+
+	-- Bruit de sabots à chaque pas
+	if moving then
+		local step = math.floor(ph / math.pi)
+		if step ~= monster.lastStep then
+			monster.lastStep = step
+			if monster.hoof then
+				playSound("pas_monstre", monster.hoof, if chasing then 1.6 else 1.1, 70, 0.85 + math.random() * 0.25)
+			end
+		end
+	end
 
 	-- Les yeux palpitent, plus vifs en chasse
 	local glow = if chasing then 0 else 0.25 + math.sin(now * 3) * 0.15
@@ -1231,7 +1395,7 @@ local function wakeMonster()
 	monster.target = nil
 	monster.speed = MONSTER_PATROL_SPEED
 	round.monsterAwake = true
-	notify(nil, "Un grincement monte de la cave… Le Veilleur s'est réveillé.", Color3.fromRGB(255, 90, 90))
+	notify(nil, "Un craquement d'os monte de la cave… Le Wendigo s'est réveillé.", Color3.fromRGB(255, 90, 90))
 end
 
 local function catchPlayer(player: Player)
@@ -1242,6 +1406,13 @@ local function catchPlayer(player: Player)
 	releaseHidden(player)
 	JumpscareRemote:FireClient(player)
 	round.catches += 1
+	round.out[player] = true
+	player:SetAttribute("InRound", false)
+	local ls = player:FindFirstChild("leaderstats")
+	local cap = ls and ls:FindFirstChild("Captures") :: IntValue?
+	if cap then
+		cap.Value += 1
+	end
 	monster.state = "festin"
 	monster.pauseUntil = os.clock() + 3
 	monster.target = nil
@@ -1249,7 +1420,7 @@ local function catchPlayer(player: Player)
 	task.delay(0.15, function()
 		hum.Health = 0
 	end)
-	notify(nil, player.DisplayName .. " a été attrapé par le Veilleur…", Color3.fromRGB(255, 80, 80))
+	notify(nil, player.DisplayName .. " a été dévoré par le Wendigo…", Color3.fromRGB(255, 80, 80))
 end
 
 -- Choisit la proie la plus visible / audible
@@ -1263,7 +1434,7 @@ local function sense(now: number)
 		local char = plr.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if char and hrp and hum and hum.Health > 0 and not round.escaped[plr] and insideManor(hrp.Position) then
+		if char and hrp and hum and hum.Health > 0 and round.participants[plr] and not round.out[plr] and not round.escaped[plr] and insideManor(hrp.Position) then
 			local d = (hrp.Position - monster.pos).Magnitude
 			local hidden = plr:GetAttribute("Hidden") == true
 			if hidden then
@@ -1291,6 +1462,9 @@ local function sense(now: number)
 	if best and bestPos then
 		if monster.state ~= "chasse" or monster.target ~= best then
 			if monster.state ~= "chasse" then
+				if monster.skull then
+					playSound("hurlement", monster.skull, 2.2, 170, 0.9 + math.random() * 0.2)
+				end
 				for _, plr in Players:GetPlayers() do
 					local h = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
 					if h and (h.Position - monster.pos).Magnitude < 90 then
@@ -1463,6 +1637,7 @@ KeypadRemote.OnServerEvent:Connect(function(player, code)
 		openSafe(player)
 	else
 		notify(player, "Code incorrect… Un bruit sourd répond au loin.", Color3.fromRGB(255, 120, 120))
+		playAt("erreur", Vector3.new(72, 3, 33), 1, 60)
 		-- L'erreur fait du bruit : le Veilleur vient voir
 		if monster.model and monster.state ~= "chasse" then
 			monster.state = "recherche"
@@ -1477,9 +1652,13 @@ local function onCharacter(player: Player, char: Model)
 	hum.WalkSpeed = WALK_SPEED
 	releaseHidden(player)
 	task.spawn(setupLamp, player, char)
-	if round and round.escaped[player] then
-		task.wait(0.1)
-		char:PivotTo(CFrame.new(SAFE_ZONE))
+	if round and round.state == "jeu" and round.participants[player] and not round.out[player] then
+		task.wait(0.15)
+		if round.escaped[player] then
+			char:PivotTo(CFrame.new(SAFE_ZONE))
+		else
+			char:PivotTo(CFrame.new(HALL_SPAWN + Vector3.new(math.random(-6, 6), 0, math.random(-4, 4))) * CFrame.Angles(0, math.rad(180), 0))
+		end
 	end
 	hum.Died:Connect(function()
 		lampOn[player] = false
@@ -1488,6 +1667,15 @@ local function onCharacter(player: Player, char: Model)
 end
 
 local function onPlayer(player: Player)
+	local ls = Instance.new("Folder")
+	ls.Name = "leaderstats"
+	for _, n in { "Évasions", "Captures" } do
+		local v = Instance.new("IntValue")
+		v.Name = n
+		v.Parent = ls
+	end
+	ls.Parent = player
+	player:SetAttribute("InRound", false)
 	battery[player] = 100
 	player:SetAttribute("Battery", 100)
 	player:SetAttribute("SprintSpeed", SPRINT_SPEED)
@@ -1516,17 +1704,234 @@ Players.PlayerRemoving:Connect(function(player)
 	keypadTries[player] = nil
 	if round then
 		round.escaped[player] = nil
+		round.participants[player] = nil
 	end
 end)
+
+---------------------------------------------------------------------------
+-- LE CAMP (LOBBY)
+---------------------------------------------------------------------------
+
+local Camp = Instance.new("Folder")
+Camp.Name = "Camp"
+local boardText: TextLabel
+local survivorsText: TextLabel
+local READY_CENTER = LOBBY + Vector3.new(0, 0, -30)
+local READY_RADIUS = 9
+
+local function campPart(props: { [string]: any }): BasePart
+	props.Parent = Camp
+	return part(props)
+end
+
+local function buildLobby()
+	for _, child in workspace:GetChildren() do
+		if child.Name == "Baseplate" or child:IsA("SpawnLocation") then
+			child:Destroy()
+		end
+	end
+	Camp.Parent = workspace
+	local L = LOBBY
+	campPart({ Name = "SolCamp", Size = Vector3.new(170, 2, 170), CFrame = CFrame.new(L.X, -1, L.Z), Color = Color3.fromRGB(34, 42, 30), Material = Enum.Material.Grass })
+	campPart({ Name = "Terre", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 46, 46), CFrame = CFrame.new(L.X, 0.05, L.Z - 8) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(70, 55, 40), Material = Enum.Material.Ground })
+
+	-- Point d'apparition
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "ApparitionCamp"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(10, 0.4, 10)
+	spawn.CFrame = CFrame.new(L.X, 0.2, L.Z + 16)
+	spawn.Color = Color3.fromRGB(60, 45, 35)
+	spawn.Material = Enum.Material.WoodPlanks
+	spawn.Transparency = 0
+	spawn.Duration = 0
+	spawn.Neutral = true
+	spawn.Parent = Camp
+
+	-- Feu de camp, rondins, tentes
+	local fire = campPart({ Name = "FeuDeCamp", Size = Vector3.new(4, 0.8, 4), CFrame = CFrame.new(L.X, 0.4, L.Z), Color = Color3.fromRGB(50, 35, 25), Material = Enum.Material.Wood })
+	local f = Instance.new("Fire")
+	f.Size = 7
+	f.Heat = 9
+	f.Parent = fire
+	local campLight = light(fire, Color3.fromRGB(255, 150, 70), 45, 2.2)
+	campLight:SetAttribute("Bougie", true)
+	for i = 0, 5 do
+		local a = i / 6 * math.pi * 2
+		campPart({ Name = "Pierre", Size = Vector3.new(1.4, 0.9, 1.2), CFrame = CFrame.new(L.X + math.cos(a) * 2.8, 0.45, L.Z + math.sin(a) * 2.8) * CFrame.Angles(0, a, 0), Color = Color3.fromRGB(80, 78, 75), Material = Enum.Material.Slate })
+	end
+	for i = 0, 3 do
+		local a = i / 4 * math.pi * 2 + 0.4
+		campPart({ Name = "Banc", Shape = Enum.PartType.Cylinder, Size = Vector3.new(7, 1.6, 1.6), CFrame = CFrame.new(L.X + math.cos(a) * 9, 0.8, L.Z + math.sin(a) * 9) * CFrame.Angles(0, -a + math.pi / 2, 0), Color = Color3.fromRGB(90, 62, 40), Material = Enum.Material.Wood })
+	end
+	for i, a in { 2.2, 3.1, 4.0 } do
+		local p = Vector3.new(L.X + math.cos(a) * 24, 0, L.Z + math.sin(a) * 24)
+		local cf = CFrame.lookAt(p, Vector3.new(L.X, 0, L.Z))
+		local tent = Color3.fromHSV(0.05 + i * 0.25, 0.4, 0.35)
+		for _, sx in { -1, 1 } do
+			campPart({ ClassName = "WedgePart", Name = "Tente", Size = Vector3.new(7, 5, 3.5), CFrame = cf * CFrame.new(sx * 1.75, 2.5, 0) * CFrame.Angles(0, math.rad(sx * 90), 0), Color = tent, Material = Enum.Material.Fabric })
+		end
+	end
+
+	-- Lanternes et tombes
+	for i = 0, 7 do
+		local a = i / 8 * math.pi * 2
+		local p = Vector3.new(L.X + math.cos(a) * 40, 0, L.Z + math.sin(a) * 40)
+		campPart({ Name = "Poteau", Size = Vector3.new(0.5, 7, 0.5), CFrame = CFrame.new(p + Vector3.new(0, 3.5, 0)), Color = Color3.fromRGB(45, 32, 22), Material = Enum.Material.Wood })
+		local lamp = campPart({ Name = "Lanterne", Size = Vector3.new(1.1, 1.3, 1.1), CFrame = CFrame.new(p + Vector3.new(0, 7.4, 0)), Color = Color3.fromRGB(255, 190, 100), Material = Enum.Material.Neon })
+		local l = light(lamp, Color3.fromRGB(255, 180, 100), 18, 0.9)
+		l:SetAttribute("Bougie", true)
+	end
+	local rng = Random.new(9)
+	for _ = 1, 14 do
+		local a = rng:NextNumber(math.rad(20), math.rad(160))
+		local d = rng:NextNumber(46, 56)
+		local p = Vector3.new(L.X + math.cos(a) * d, 0, L.Z + math.sin(a) * d)
+		local g = campPart({ Name = "Tombe", Size = Vector3.new(2.4, 3.2, 0.6), CFrame = CFrame.lookAt(p + Vector3.new(0, 1.4, 0), Vector3.new(L.X, 1.4, L.Z)) * CFrame.Angles(rng:NextNumber(-0.15, 0.15), 0, rng:NextNumber(-0.12, 0.12)), Color = Color3.fromRGB(105, 105, 110), Material = Enum.Material.Slate })
+		_ = g
+	end
+
+	-- Forêt morte et murs invisibles tout autour
+	for _ = 1, 70 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local d = rng:NextNumber(60, 82)
+		local x, z = L.X + math.cos(a) * d, L.Z + math.sin(a) * d
+		local h = rng:NextNumber(18, 32)
+		campPart({ Name = "Arbre", Size = Vector3.new(1.8, h, 1.8), CFrame = CFrame.new(x, h / 2, z) * CFrame.Angles(rng:NextNumber(-0.1, 0.1), 0, rng:NextNumber(-0.1, 0.1)), Color = Color3.fromRGB(32, 26, 22), Material = Enum.Material.Wood })
+		for k = 1, 3 do
+			campPart({ Name = "Branche", Size = Vector3.new(0.6, rng:NextNumber(5, 10), 0.6), CFrame = CFrame.new(x, h * (0.5 + k * 0.13), z) * CFrame.Angles(rng:NextNumber(-1, 1), rng:NextNumber(0, 6), rng:NextNumber(0.6, 1.2)), Color = Color3.fromRGB(32, 26, 22), Material = Enum.Material.Wood })
+		end
+	end
+	for i = 0, 23 do
+		local a = i / 24 * math.pi * 2
+		campPart({ Name = "LimiteCamp", Size = Vector3.new(2, 60, 2 * math.pi * 62 / 24 + 2), CFrame = CFrame.new(L.X + math.cos(a) * 62, 30, L.Z + math.sin(a) * 62) * CFrame.Angles(0, -a, 0), Transparency = 1, CanQuery = false })
+	end
+
+	-- Lucioles
+	local flies = campPart({ Name = "Lucioles", Size = Vector3.new(100, 8, 100), CFrame = CFrame.new(L.X, 5, L.Z), Transparency = 1, CanCollide = false })
+	local fe = Instance.new("ParticleEmitter")
+	fe.Shape = Enum.ParticleEmitterShape.Box
+	fe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+	fe.Rate = 12
+	fe.Lifetime = NumberRange.new(4, 7)
+	fe.Speed = NumberRange.new(0.3, 1)
+	fe.SpreadAngle = Vector2.new(180, 180)
+	fe.Size = NumberSequence.new(0.18)
+	fe.Color = ColorSequence.new(Color3.fromRGB(200, 255, 140))
+	fe.LightEmission = 1
+	fe.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.1), NumberSequenceKeypoint.new(1, 1) })
+	fe.Parent = flies
+
+	-- Le cercle rituel : on y entre pour participer à la prochaine nuit
+	local C = READY_CENTER
+	campPart({ Name = "CercleRituel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.12, READY_RADIUS * 2, READY_RADIUS * 2), CFrame = CFrame.new(C.X, 0.08, C.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(150, 15, 20), Material = Enum.Material.Neon, Transparency = 0.55, CanCollide = false })
+	campPart({ Name = "CercleInterieur", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.14, READY_RADIUS * 2 - 1.2, READY_RADIUS * 2 - 1.2), CFrame = CFrame.new(C.X, 0.1, C.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(20, 12, 14), Material = Enum.Material.Slate, CanCollide = false })
+	for i = 0, 9 do
+		local a = i / 10 * math.pi * 2
+		local stone = campPart({ Name = "Menhir", Size = Vector3.new(1.4, 4 + (i % 3), 1), CFrame = CFrame.new(C.X + math.cos(a) * (READY_RADIUS + 1.5), 2, C.Z + math.sin(a) * (READY_RADIUS + 1.5)) * CFrame.Angles(0, -a, 0), Color = Color3.fromRGB(70, 68, 66), Material = Enum.Material.Slate })
+		if i % 2 == 0 then
+			local rune = campPart({ Name = "Rune", Size = Vector3.new(0.2, 1, 0.6), CFrame = stone.CFrame * CFrame.new(-0.72, 0.8, 0), Color = Color3.fromRGB(255, 40, 30), Material = Enum.Material.Neon, CanCollide = false })
+			local rl = light(rune, Color3.fromRGB(255, 40, 30), 10, 0.8)
+			rl.Shadows = false
+		end
+	end
+	local mist = campPart({ Name = "Brume", Size = Vector3.new(READY_RADIUS * 2, 1, READY_RADIUS * 2), CFrame = CFrame.new(C.X, 0.6, C.Z), Transparency = 1, CanCollide = false })
+	local me = Instance.new("ParticleEmitter")
+	me.Shape = Enum.ParticleEmitterShape.Box
+	me.Rate = 14
+	me.Lifetime = NumberRange.new(3, 5)
+	me.Speed = NumberRange.new(0.5, 1.5)
+	me.EmissionDirection = Enum.NormalId.Top
+	me.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.5), NumberSequenceKeypoint.new(1, 4) })
+	me.Color = ColorSequence.new(Color3.fromRGB(120, 20, 25))
+	me.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.4, 0.75), NumberSequenceKeypoint.new(1, 1) })
+	me.LightEmission = 0.4
+	me.Parent = mist
+
+	-- Totem au crâne de cerf (un avant-goût du Wendigo)
+	local T = C + Vector3.new(0, 0, -15)
+	campPart({ Name = "Totem", Size = Vector3.new(0.9, 10, 0.9), CFrame = CFrame.new(T + Vector3.new(0, 5, 0)), Color = Color3.fromRGB(40, 30, 22), Material = Enum.Material.Wood })
+	local skullCF = CFrame.new(T + Vector3.new(0, 10.6, 0)) * CFrame.Angles(math.rad(-10), 0, 0)
+	campPart({ Name = "CraneTotem", Size = Vector3.new(1.25, 1.05, 1.35), CFrame = skullCF, Color = BONE, Material = Enum.Material.Limestone })
+	campPart({ Name = "MuseauTotem", Size = Vector3.new(0.72, 0.58, 1.9), CFrame = skullCF * CFrame.new(0, -0.3, -1.2) * CFrame.Angles(math.rad(8), 0, 0), Color = BONE, Material = Enum.Material.Limestone })
+	for _, sx in { -1, 1 } do
+		local eye = campPart({ Name = "OeilTotem", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.3, CFrame = skullCF * CFrame.new(sx * 0.42, 0.1, -0.62), Color = Color3.fromRGB(255, 20, 10), Material = Enum.Material.Neon, CanCollide = false })
+		_ = eye
+		buildAntler(function(cf, props)
+			props.CFrame = skullCF * cf
+			props.CanCollide = false
+			campPart(props)
+		end, CFrame.new(sx * 0.42, 0.45, 0.2), sx)
+	end
+	local tl = light(campPart({ Name = "LueurTotem", Size = Vector3.one * 0.2, CFrame = skullCF * CFrame.new(0, 0, -1.2), Transparency = 1, CanCollide = false }), Color3.fromRGB(255, 30, 20), 14, 1)
+	tl.Shadows = false
+
+	-- Panneaux : état de la partie et survivants
+	local function board(pos: Vector3, title: string): TextLabel
+		local cf = CFrame.lookAt(pos, Vector3.new(L.X, pos.Y, L.Z + 10))
+		for _, sx in { -1, 1 } do
+			campPart({ Name = "Pied", Size = Vector3.new(0.6, 9, 0.6), CFrame = cf * CFrame.new(sx * 6.4, -2.5, 0.2), Color = Color3.fromRGB(45, 32, 22), Material = Enum.Material.Wood })
+		end
+		local b = campPart({ Name = "Panneau", Size = Vector3.new(13, 7, 0.4), CFrame = cf, Color = Color3.fromRGB(60, 42, 28), Material = Enum.Material.WoodPlanks })
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = Enum.NormalId.Front
+		sg.CanvasSize = Vector2.new(650, 350)
+		sg.LightInfluence = 0.4
+		local head = Instance.new("TextLabel")
+		head.Size = UDim2.new(1, 0, 0, 80)
+		head.BackgroundTransparency = 1
+		head.Text = title
+		head.Font = Enum.Font.Creepster
+		head.TextScaled = true
+		head.TextColor3 = Color3.fromRGB(200, 30, 30)
+		head.Parent = sg
+		local body = Instance.new("TextLabel")
+		body.Size = UDim2.new(1, -40, 1, -100)
+		body.Position = UDim2.fromOffset(20, 90)
+		body.BackgroundTransparency = 1
+		body.Text = ""
+		body.Font = Enum.Font.SpecialElite
+		body.TextScaled = true
+		body.TextColor3 = Color3.fromRGB(235, 225, 210)
+		body.Parent = sg
+		sg.Parent = b
+		local lamp = campPart({ Name = "LampePanneau", Size = Vector3.one * 0.6, CFrame = cf * CFrame.new(0, 4.2, -1.4), Color = Color3.fromRGB(255, 200, 120), Material = Enum.Material.Neon })
+		light(lamp, Color3.fromRGB(255, 190, 120), 12, 0.9)
+		return body
+	end
+	boardText = board(LOBBY + Vector3.new(-17, 6, -36), "LE MANOIR DES OMBRES")
+	survivorsText = board(LOBBY + Vector3.new(17, 6, -36), "SURVIVANTS")
+end
+
+local function inLobby(plr: Player): boolean
+	return plr:GetAttribute("InRound") ~= true
+end
+
+local function refreshSurvivors()
+	local list = {}
+	for _, plr in Players:GetPlayers() do
+		local ls = plr:FindFirstChild("leaderstats")
+		local ev = ls and ls:FindFirstChild("Évasions") :: IntValue?
+		table.insert(list, { name = plr.DisplayName, n = if ev then ev.Value else 0 })
+	end
+	table.sort(list, function(a, b)
+		return a.n > b.n
+	end)
+	local lines = {}
+	for i = 1, math.min(6, #list) do
+		table.insert(lines, string.format("%d. %s — %d évasion%s", i, list[i].name, list[i].n, if list[i].n > 1 then "s" else ""))
+	end
+	survivorsText.Text = if #lines > 0 then table.concat(lines, "\n") else "Personne n'a encore survécu…"
+end
 
 ---------------------------------------------------------------------------
 -- MANCHES
 ---------------------------------------------------------------------------
 
-local function startRound()
+local function startRound(players: { Player })
 	round = {
 		state = "jeu", timeLeft = ROUND_TIME, fuses = 0, power = false, safeOpen = false,
-		hasKey = false, doorOpen = false, code = "0000", clockText = "", escaped = {},
+		hasKey = false, doorOpen = false, code = "0000", clockText = "", escaped = {}, participants = {}, out = {},
 		catches = 0, roomLights = {}, officeDoor = nil, frontDoor = nil, safeDoor = nil,
 		monsterAwake = false, started = os.clock(),
 	}
@@ -1536,7 +1941,9 @@ local function startRound()
 	buildManor()
 	refreshInventory()
 	setObjective("Trouve les 3 fusibles cachés dans le manoir (0/3).")
-	for _, plr in Players:GetPlayers() do
+	for _, plr in players do
+		round.participants[plr] = true
+		plr:SetAttribute("InRound", true)
 		plr:SetAttribute("Escaped", false)
 		battery[plr] = 100
 		plr:SetAttribute("Battery", 100)
@@ -1545,19 +1952,13 @@ local function startRound()
 			plr:LoadCharacter()
 		end)
 	end
-	notify(nil, "Les portes se referment derrière vous… Trouvez une sortie avant l'aube.", Color3.fromRGB(220, 200, 255))
+	notify(nil, "La nuit tombe sur le manoir… Les portes se referment derrière vous.", Color3.fromRGB(220, 200, 255))
 end
 
 local function endRound(reason: string)
 	round.state = "fin"
-	local anyEscaped = false
-	for plr in round.escaped do
-		if plr.Parent then
-			anyEscaped = true
-		end
-	end
-	for _, plr in Players:GetPlayers() do
-		if not round.escaped[plr] then
+	for plr in round.participants do
+		if plr.Parent and not round.escaped[plr] and not round.out[plr] then
 			EndRemote:FireClient(plr, false, reason)
 		end
 	end
@@ -1565,20 +1966,90 @@ local function endRound(reason: string)
 		monster.model:Destroy()
 		monster.model = nil
 	end
-	notify(nil, if anyEscaped then "Fin de la manche : certains ont survécu…" else "Fin de la manche : le manoir a gardé tout le monde.", Color3.fromRGB(220, 200, 255))
+	local n = 0
+	for plr in round.escaped do
+		if plr.Parent then
+			n += 1
+		end
+	end
+	notify(nil, if n > 0 then string.format("Fin de la nuit : %d survivant%s.", n, if n > 1 then "s" else "") else "Fin de la nuit : le manoir a gardé tout le monde…", Color3.fromRGB(220, 200, 255))
+	refreshSurvivors()
+	-- Retour au camp
+	task.delay(6, function()
+		for plr in round.participants do
+			if plr.Parent and plr:GetAttribute("InRound") then
+				plr:SetAttribute("InRound", false)
+			end
+			if plr.Parent and (round.escaped[plr] or not round.out[plr]) then
+				releaseHidden(plr)
+				task.spawn(function()
+					plr:LoadCharacter()
+				end)
+			end
+		end
+	end)
 end
 
--- Boucle des manches
+-- Boucle principale : camp -> nuit -> camp
+buildLobby()
+round = {
+	state = "camp", timeLeft = 0, fuses = 0, power = false, safeOpen = false, hasKey = false, doorOpen = false,
+	code = "0000", clockText = "", escaped = {}, participants = {}, out = {}, catches = 0, roomLights = {},
+	officeDoor = nil, frontDoor = nil, safeDoor = nil, monsterAwake = false, started = 0,
+}
 task.spawn(function()
 	while true do
-		startRound()
+		-- Au camp : on attend que des joueurs entrent dans le cercle rituel
+		local countdown = LOBBY_COUNTDOWN
+		refreshSurvivors()
+		while true do
+			task.wait(1)
+			local ready, inCamp = {}, 0
+			for _, plr in Players:GetPlayers() do
+				if inLobby(plr) then
+					inCamp += 1
+					local hrp = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+					local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+					if hrp and hum and hum.Health > 0 then
+						local d = Vector3.new(hrp.Position.X - READY_CENTER.X, 0, hrp.Position.Z - READY_CENTER.Z).Magnitude
+						if d < READY_RADIUS then
+							table.insert(ready, plr)
+						end
+					end
+				end
+			end
+			if #ready == 0 then
+				countdown = LOBBY_COUNTDOWN
+				boardText.Text = "Entrez dans le cercle rouge pour affronter la prochaine nuit.\n\nTrouvez les fusibles, le code du coffre et la clé…\nEt ne laissez pas le Wendigo vous voir."
+			else
+				countdown -= 1
+				if #ready == inCamp then
+					countdown = math.min(countdown, 5)
+				end
+				boardText.Text = string.format("%d joueur%s dans le cercle (sur %d)\n\nLa nuit commence dans %d s…", #ready, if #ready > 1 then "s" else "", inCamp, math.max(0, countdown))
+			end
+			RoundRemote:FireAllClients("camp", math.max(0, countdown), #ready, inCamp)
+			if #ready > 0 and countdown <= 0 then
+				startRound(ready)
+				break
+			end
+		end
+
+		-- La nuit
 		local last = os.clock()
 		while round.state == "jeu" do
 			task.wait(1)
 			local now = os.clock()
 			round.timeLeft -= now - last
 			last = now
-			RoundRemote:FireAllClients("jeu", math.max(0, math.floor(round.timeLeft)))
+			local active = 0
+			for plr in round.participants do
+				if plr.Parent and not round.escaped[plr] and not round.out[plr] then
+					active += 1
+				end
+			end
+			RoundRemote:FireAllClients("jeu", math.max(0, math.floor(round.timeLeft)), active)
+			boardText.Text = string.format("Une nuit est en cours…\n\n%d:%02d avant l'aube\n%d joueur%s encore dans le manoir", math.max(0, math.floor(round.timeLeft)) // 60, math.max(0, math.floor(round.timeLeft)) % 60, active, if active > 1 then "s" else "")
 			if not round.monsterAwake and now - round.started > MONSTER_DELAY then
 				wakeMonster()
 			end
@@ -1592,17 +2063,10 @@ task.spawn(function()
 					end
 				end
 			end
-			-- Fin de manche ?
-			local inside = 0
-			for _, plr in Players:GetPlayers() do
-				if not round.escaped[plr] then
-					inside += 1
-				end
-			end
 			if round.timeLeft <= 0 then
 				endRound("L'aube ne viendra jamais pour vous… Le temps est écoulé.")
-			elseif inside == 0 and #Players:GetPlayers() > 0 then
-				endRound("Tout le monde s'est échappé !")
+			elseif active == 0 then
+				endRound("La nuit est terminée.")
 			end
 		end
 		for s = INTERMISSION, 1, -1 do
