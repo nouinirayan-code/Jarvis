@@ -254,37 +254,105 @@ end)
 ---------------------------------------------------------------------------
 
 local scare = frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0, Visible = false, ZIndex = 50, Parent = gui })
-local face = frame({ Size = UDim2.fromScale(0.5, 0.75), Position = UDim2.fromScale(0.25, 0.12), BackgroundColor3 = Color3.fromRGB(215, 210, 205), BackgroundTransparency = 0, ZIndex = 51, Parent = scare })
-corner(face, 200)
-for _, x in { 0.22, 0.58 } do
-	local eye = frame({ Size = UDim2.fromScale(0.2, 0.16), Position = UDim2.fromScale(x, 0.3), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
-	corner(eye, 100)
-	local pupil = frame({ Size = UDim2.fromScale(0.3, 0.3), Position = UDim2.fromScale(0.35, 0.35), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0, ZIndex = 53, Parent = eye })
-	corner(pupil, 100)
+local scareGlow = frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLOOD, BackgroundTransparency = 0.5, ZIndex = 50, Parent = scare })
+local glowGrad = Instance.new("UIGradient")
+glowGrad.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 1), NumberSequenceKeypoint.new(1, 0) })
+glowGrad.Parent = scareGlow
+-- Crâne allongé du Veilleur
+local face = frame({ Size = UDim2.fromScale(0.42, 0.8), Position = UDim2.fromScale(0.29, 0.1), BackgroundColor3 = Color3.fromRGB(200, 190, 170), BackgroundTransparency = 0, ZIndex = 51, Parent = scare })
+corner(face, 400)
+local faceShade = Instance.new("UIGradient")
+faceShade.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(230, 222, 200)), ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 60, 55)) })
+faceShade.Rotation = 90
+faceShade.Parent = face
+-- Six yeux rouges dans des orbites noires
+local eyeSpots = { { 0.16, 0.24, 0.2 }, { 0.62, 0.24, 0.2 }, { 0.3, 0.12, 0.12 }, { 0.58, 0.11, 0.11 }, { 0.06, 0.4, 0.1 }, { 0.82, 0.41, 0.09 } }
+local scareEyes = {}
+for _, e in eyeSpots do
+	local socket = frame({ Size = UDim2.fromScale(e[3], e[3] * 0.55), Position = UDim2.fromScale(e[1], e[2]), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
+	corner(socket, 100)
+	local iris = frame({ Size = UDim2.fromScale(0.42, 0.6), Position = UDim2.fromScale(0.29, 0.2), BackgroundColor3 = Color3.fromRGB(255, 30, 20), BackgroundTransparency = 0, ZIndex = 53, Parent = socket })
+	corner(iris, 100)
+	table.insert(scareEyes, iris)
 end
-local mouth = frame({ Size = UDim2.fromScale(0.5, 0.25), Position = UDim2.fromScale(0.25, 0.62), BackgroundColor3 = Color3.fromRGB(40, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
-corner(mouth, 60)
-for i = 0, 6 do
-	frame({ Size = UDim2.fromScale(0.06, 0.35), Position = UDim2.fromScale(0.07 + i * 0.13, 0), BackgroundColor3 = Color3.fromRGB(230, 225, 210), BackgroundTransparency = 0, ZIndex = 53, Parent = mouth })
+-- Gueule béante et deux rangées de crocs
+local mouth = frame({ Size = UDim2.fromScale(0.78, 0.42), Position = UDim2.fromScale(0.11, 0.52), BackgroundColor3 = Color3.fromRGB(25, 0, 0), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
+corner(mouth, 80)
+local throat = frame({ Size = UDim2.fromScale(0.4, 0.4), Position = UDim2.fromScale(0.3, 0.32), BackgroundColor3 = Color3.fromRGB(150, 0, 0), BackgroundTransparency = 0.2, ZIndex = 52, Parent = mouth })
+corner(throat, 100)
+text({ Size = UDim2.fromScale(1, 0.32), Position = UDim2.fromScale(0, -0.04), Text = "▼▼▼▼▼▼▼▼▼▼", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.fromRGB(240, 232, 210), ZIndex = 53, Parent = mouth })
+text({ Size = UDim2.fromScale(1, 0.3), Position = UDim2.fromScale(0, 0.74), Text = "▲▲▲▲▲▲▲▲▲▲", TextScaled = true, Font = Enum.Font.GothamBlack, TextColor3 = Color3.fromRGB(240, 232, 210), ZIndex = 53, Parent = mouth })
+-- Fissures
+for i = 1, 4 do
+	frame({ Size = UDim2.fromScale(0.01, 0.25), Position = UDim2.fromScale(0.2 + i * 0.15, 0.02 + (i % 2) * 0.05), Rotation = (i % 2 == 0) and 25 or -20, BackgroundColor3 = Color3.fromRGB(40, 30, 25), BackgroundTransparency = 0, ZIndex = 52, Parent = face })
 end
+
+-- Effets de post-traitement locaux (n'affectent que ce joueur)
+local Lighting = game:GetService("Lighting")
+local fearCC = Instance.new("ColorCorrectionEffect")
+fearCC.Name = "PeurLocale"
+fearCC.Parent = Lighting
+local fearBlur = Instance.new("BlurEffect")
+fearBlur.Name = "FlouLocal"
+fearBlur.Size = 0
+fearBlur.Parent = Lighting
+local shakeAmount = 0
+local fovKick = 0
 
 Remotes:WaitForChild("Jumpscare").OnClientEvent:Connect(function()
 	scare.Visible = true
-	face.Size = UDim2.fromScale(0.2, 0.3)
-	face.Position = UDim2.fromScale(0.4, 0.35)
-	TweenService:Create(face, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Size = UDim2.fromScale(0.9, 1.3), Position = UDim2.fromScale(0.05, -0.15) }):Play()
-	local cam = workspace.CurrentCamera
-	for _ = 1, 14 do
-		face.Rotation = math.random(-6, 6)
-		scare.BackgroundColor3 = if math.random() < 0.5 then Color3.new(0, 0, 0) else BLOOD
-		if cam then
-			cam.CFrame *= CFrame.Angles(math.rad(math.random(-3, 3)), math.rad(math.random(-3, 3)), 0)
+	face.Size = UDim2.fromScale(0.12, 0.22)
+	face.Position = UDim2.fromScale(0.44, 0.4)
+	fearBlur.Size = 18
+	fearCC.TintColor = Color3.fromRGB(255, 120, 120)
+	TweenService:Create(face, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Size = UDim2.fromScale(1.1, 1.6), Position = UDim2.fromScale(-0.05, -0.2) }):Play()
+	shakeAmount = 1
+	for i = 1, 18 do
+		face.Rotation = math.random(-7, 7)
+		scare.BackgroundColor3 = if i % 2 == 0 then Color3.new(0, 0, 0) else Color3.fromRGB(90, 0, 0)
+		for _, e in scareEyes do
+			e.BackgroundColor3 = if math.random() < 0.5 then Color3.fromRGB(255, 30, 20) else Color3.fromRGB(255, 220, 200)
 		end
-		task.wait(0.05)
+		task.wait(0.045)
 	end
+	TweenService:Create(scare, TweenInfo.new(0.8), { BackgroundTransparency = 0 }):Play()
+	task.wait(0.5)
+	face.Size = UDim2.fromScale(0, 0)
 	task.wait(0.6)
 	scare.Visible = false
-	scare.BackgroundColor3 = Color3.new(0, 0, 0)
+	fearCC.TintColor = Color3.new(1, 1, 1)
+end)
+
+-- Hurlement : le Veilleur t'a repéré
+local alert = text({ Size = UDim2.new(1, 0, 0, 120), Position = UDim2.fromScale(0, 0.38), Text = "IL T'A VU", Font = Enum.Font.Creepster, TextSize = 96, TextColor3 = BLOOD, TextStrokeTransparency = 0.2, TextTransparency = 1, ZIndex = 30, Parent = gui })
+Remotes:WaitForChild("Screech").OnClientEvent:Connect(function()
+	shakeAmount = math.max(shakeAmount, 0.8)
+	fovKick = 14
+	fearBlur.Size = 10
+	alert.TextTransparency = 0
+	alert.TextSize = 70
+	TweenService:Create(alert, TweenInfo.new(0.4, Enum.EasingStyle.Back), { TextSize = 104 }):Play()
+	task.delay(0.9, function()
+		TweenService:Create(alert, TweenInfo.new(0.8), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	end)
+end)
+
+-- Éclairs de l'orage
+Remotes:WaitForChild("Lightning").OnClientEvent:Connect(function()
+	local amb, out = Lighting.Ambient, Lighting.OutdoorAmbient
+	for _ = 1, math.random(1, 3) do
+		Lighting.Ambient = Color3.fromRGB(150, 160, 200)
+		Lighting.OutdoorAmbient = Color3.fromRGB(200, 210, 255)
+		fearCC.Brightness = 0.35
+		task.wait(0.06 + math.random() * 0.05)
+		Lighting.Ambient = amb
+		Lighting.OutdoorAmbient = out
+		fearCC.Brightness = 0
+		task.wait(0.08 + math.random() * 0.12)
+	end
+	-- Le tonnerre gronde un peu plus tard
+	task.wait(0.8 + math.random())
+	shakeAmount = math.max(shakeAmount, 0.35)
 end)
 
 local endScreen = frame({ Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.3, Visible = false, ZIndex = 40, Parent = gui })
@@ -330,33 +398,75 @@ local stamina = 1
 -- BOUCLE : peur, course, batterie
 ---------------------------------------------------------------------------
 
+-- Rayures de vieux film
+local scratches = {}
+for _ = 1, 3 do
+	table.insert(scratches, frame({ Size = UDim2.new(0, 1, 1, 0), BackgroundColor3 = Color3.fromRGB(220, 210, 190), BackgroundTransparency = 1, ZIndex = 3, Parent = gui }))
+end
+
+-- Bougies et yeux des portraits (effets purement locaux)
+local candleLights: { PointLight } = {}
+local portraitEyes: { BasePart } = {}
+local function scanManor()
+	table.clear(candleLights)
+	table.clear(portraitEyes)
+	local manor = workspace:FindFirstChild("Manoir")
+	if not manor then
+		return
+	end
+	for _, d in manor:GetDescendants() do
+		if d:IsA("PointLight") and d:GetAttribute("Bougie") then
+			table.insert(candleLights, d)
+		elseif d:IsA("BasePart") and d.Name == "OeilTableau" then
+			table.insert(portraitEyes, d)
+		end
+	end
+end
+task.spawn(function()
+	while true do
+		scanManor()
+		task.wait(4)
+	end
+end)
+
 local heartT = 0
+local bobT = 0
+local lastEyes = false
 RunService.RenderStepped:Connect(function(dt)
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local hidden = player:GetAttribute("Hidden") == true
+	local running = false
 
 	-- Course et souffle
 	if hum and not hidden and hum.Health > 0 then
 		local moving = hum.MoveDirection.Magnitude > 0.1
-		local run = sprinting and moving and stamina > 0.02
+		running = sprinting and moving and stamina > 0.02
 		local walk = player:GetAttribute("WalkSpeed") or 12
 		local sprint = player:GetAttribute("SprintSpeed") or 19
-		hum.WalkSpeed = if run then sprint else walk
-		if run then
+		hum.WalkSpeed = if running then sprint else walk
+		if running then
 			stamina = math.max(0, stamina - dt / 5)
 		else
 			stamina = math.min(1, stamina + dt / (if moving then 9 else 5))
 		end
+		if moving then
+			bobT += dt * (if running then 14 else 9)
+		end
 	end
 	staminaFill.Size = UDim2.fromScale(stamina, 1)
 
-	-- Batterie
+	-- Batterie (la lampe vacille quand elle est presque vide)
 	local battery = player:GetAttribute("Battery") or 0
 	batteryFill.Size = UDim2.fromScale(battery / 100, 1)
 	batteryText.Text = if player:GetAttribute("Lamp") then "Lampe ●" else "Lampe"
 	batteryFill.BackgroundColor3 = if battery < 20 then Color3.fromRGB(230, 80, 60) else Color3.fromRGB(240, 220, 120)
+	local head = char and char:FindFirstChild("Head")
+	local spot = head and head:FindFirstChild("Lampe") :: SpotLight?
+	if spot and spot.Enabled then
+		spot.Brightness = if battery < 20 and math.random() < 0.12 then 0.4 else 3.2
+	end
 
 	-- Cachette
 	hideView.Visible = hidden
@@ -366,9 +476,10 @@ RunService.RenderStepped:Connect(function(dt)
 	local intensity = 0
 	local manor = workspace:FindFirstChild("Manoir")
 	local monster = manor and manor:FindFirstChild("LeVeilleur") :: Model?
+	local monsterDist = math.huge
 	if monster and monster.PrimaryPart and hrp then
-		local d = (monster.PrimaryPart.Position - hrp.Position).Magnitude
-		intensity = math.clamp(1 - (d - 8) / 50, 0, 1)
+		monsterDist = (monster.PrimaryPart.Position - hrp.Position).Magnitude
+		intensity = math.clamp(1 - (monsterDist - 8) / 50, 0, 1)
 		if Remotes:GetAttribute("MonsterState") == "chasse" then
 			intensity = math.max(intensity, 0.35)
 		end
@@ -376,10 +487,56 @@ RunService.RenderStepped:Connect(function(dt)
 	heartT += dt * (1.2 + intensity * 2.5)
 	local beat = (math.max(0, math.sin(heartT * math.pi * 2)) ^ 6)
 	fear.BackgroundTransparency = 1 - intensity * (0.35 + beat * 0.35)
+
+	-- Image : désaturée, contrastée et floue quand il est proche
+	fearCC.Saturation = -0.25 - intensity * 0.6
+	fearCC.Contrast = 0.1 + intensity * 0.35 + beat * intensity * 0.15
+	if not scare.Visible then
+		fearCC.TintColor = Color3.new(1, 1 - intensity * 0.25, 1 - intensity * 0.3)
+		local targetBlur = intensity * 3 + beat * intensity * 2
+		fearBlur.Size += (targetBlur - fearBlur.Size) * math.min(1, dt * 6)
+	end
+
+	-- Caméra : balancement de la marche, champ de vision, tremblements
 	local cam = workspace.CurrentCamera
-	if cam and intensity > 0.5 and not hidden then
-		local s = (intensity - 0.5) * 0.012
-		cam.CFrame *= CFrame.Angles((math.random() - 0.5) * s, (math.random() - 0.5) * s, 0)
+	if cam then
+		fovKick = math.max(0, fovKick - dt * 20)
+		local targetFov = 70 + (if running then 8 else 0) + intensity * 6 + fovKick
+		cam.FieldOfView += (targetFov - cam.FieldOfView) * math.min(1, dt * 5)
+		if not hidden and hum and hum.MoveDirection.Magnitude > 0.1 then
+			local amp = if running then 0.018 else 0.009
+			cam.CFrame *= CFrame.Angles(math.sin(bobT * 2) * amp * 0.5, 0, math.sin(bobT) * amp)
+		end
+		shakeAmount = math.max(0, shakeAmount - dt * 1.5)
+		local shake = shakeAmount * 0.04 + (if intensity > 0.5 and not hidden then (intensity - 0.5) * 0.012 else 0)
+		if shake > 0 then
+			cam.CFrame *= CFrame.Angles((math.random() - 0.5) * shake, (math.random() - 0.5) * shake, (math.random() - 0.5) * shake * 0.5)
+		end
+	end
+
+	-- Bougies qui vacillent
+	local t = os.clock()
+	for i, l in candleLights do
+		l.Brightness = 0.75 + math.sin(t * 9 + i * 1.7) * 0.12 + math.sin(t * 23 + i) * 0.08 + (if math.random() < 0.01 then -0.4 else 0)
+	end
+
+	-- Les yeux des portraits s'allument quand il rôde près de toi
+	local eyesOn = monsterDist < 38
+	if eyesOn ~= lastEyes then
+		lastEyes = eyesOn
+		for _, e in portraitEyes do
+			e.Color = if eyesOn then Color3.fromRGB(255, 30, 20) else Color3.fromRGB(20, 15, 15)
+		end
+	end
+
+	-- Rayures de film
+	for _, sc in scratches do
+		if math.random() < 0.04 then
+			sc.Position = UDim2.fromScale(math.random(), 0)
+			sc.BackgroundTransparency = 0.75 + math.random() * 0.2
+		else
+			sc.BackgroundTransparency = math.min(1, sc.BackgroundTransparency + dt * 6)
+		end
 	end
 end)
 

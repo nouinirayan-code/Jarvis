@@ -59,6 +59,8 @@ local JumpscareRemote = remote("Jumpscare")
 local RoundRemote = remote("Round") -- (état, secondes restantes)
 local EndRemote = remote("End") -- (victoire, texte)
 local LampRemote = remote("Lamp") -- client -> serveur : basculer la lampe
+local ScreechRemote = remote("Screech") -- (position du monstre) : hurlement quand il repère une proie
+local LightningRemote = remote("Lightning") -- éclair de l'orage
 
 local Manor: Folder -- reconstruit à chaque manche
 
@@ -147,6 +149,22 @@ grade.Saturation = -0.35
 grade.Contrast = 0.15
 grade.TintColor = Color3.fromRGB(215, 220, 255)
 grade.Parent = Lighting
+local bloom = Instance.new("BloomEffect")
+bloom.Intensity = 0.9
+bloom.Size = 32
+bloom.Threshold = 0.85
+bloom.Parent = Lighting
+local dof = Instance.new("DepthOfFieldEffect")
+dof.FarIntensity = 0.3
+dof.FocusDistance = 18
+dof.InFocusRadius = 28
+dof.NearIntensity = 0
+dof.Parent = Lighting
+local clouds = Instance.new("Clouds")
+clouds.Cover = 0.8
+clouds.Density = 0.75
+clouds.Color = Color3.fromRGB(45, 45, 60)
+clouds.Parent = workspace.Terrain
 
 Players.RespawnTime = 6
 
@@ -286,6 +304,106 @@ local function painting(pos: Vector3, rotY: number, w: number, h: number, color:
 	part({ Name = "Toile", Size = Vector3.new(w, h, 0.32), CFrame = cf, Color = color, Material = Enum.Material.Fabric })
 	-- Silhouette inquiétante
 	part({ Name = "Portrait", Shape = Enum.PartType.Ball, Size = Vector3.new(h * 0.35, h * 0.35, h * 0.35), CFrame = cf * CFrame.new(0, h * 0.12, 0), Color = Color3.fromRGB(30, 25, 25), CanCollide = false })
+	-- Les yeux du portrait s'allument quand le Veilleur approche (géré par le client)
+	for _, side in { -1, 1 } do
+		for _, face in { -1, 1 } do
+			part({ Name = "OeilTableau", Size = Vector3.new(h * 0.05, h * 0.03, 0.05), CFrame = cf * CFrame.new(side * h * 0.06, h * 0.15, face * h * 0.18), Color = Color3.fromRGB(20, 15, 15), Material = Enum.Material.Neon, CanCollide = false })
+		end
+	end
+end
+
+-- Fenêtre éclairée par la lune (orientée vers l'intérieur)
+local function moonWindow(pos: Vector3, inward: Vector3)
+	local cf = CFrame.lookAt(pos, pos + inward)
+	local glass = part({ Name = "Fenetre", Size = Vector3.new(5, 6.5, 0.2), CFrame = cf, Color = Color3.fromRGB(120, 140, 210), Material = Enum.Material.Neon, Transparency = 0.55, CanCollide = false, CanQuery = true })
+	part({ Name = "Encadrement", Size = Vector3.new(5.8, 0.5, 0.5), CFrame = cf * CFrame.new(0, 3.4, 0), Color = Color3.fromRGB(45, 30, 22), Material = Enum.Material.Wood })
+	part({ Name = "Encadrement", Size = Vector3.new(5.8, 0.6, 1), CFrame = cf * CFrame.new(0, -3.4, -0.3), Color = Color3.fromRGB(45, 30, 22), Material = Enum.Material.Wood })
+	part({ Name = "Croisillon", Size = Vector3.new(0.25, 6.5, 0.3), CFrame = cf, Color = Color3.fromRGB(35, 25, 20), Material = Enum.Material.Wood, CanCollide = false })
+	part({ Name = "Croisillon", Size = Vector3.new(5, 0.25, 0.3), CFrame = cf * CFrame.new(0, 0.8, 0), Color = Color3.fromRGB(35, 25, 20), Material = Enum.Material.Wood, CanCollide = false })
+	for _, sx in { -1, 1 } do
+		part({ Name = "Rideau", Size = Vector3.new(1.6, 9, 0.3), CFrame = cf * CFrame.new(sx * 3.4, -0.6, -0.4), Color = Color3.fromRGB(80, 15, 22), Material = Enum.Material.Fabric, CanCollide = false })
+	end
+	local spot = Instance.new("SpotLight")
+	spot.Face = Enum.NormalId.Front
+	spot.Color = Color3.fromRGB(140, 160, 255)
+	spot.Range = 34
+	spot.Angle = 70
+	spot.Brightness = 1.1
+	spot.Shadows = true
+	spot.Parent = glass
+	glass:SetAttribute("Fenetre", true)
+	-- Rayon de lune visible (poussière éclairée)
+	local a0 = Instance.new("Attachment")
+	a0.Parent = glass
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, -6, -14)
+	a1.Parent = glass
+	local beam = Instance.new("Beam")
+	beam.Attachment0 = a0
+	beam.Attachment1 = a1
+	beam.FaceCamera = true
+	beam.Width0 = 4.5
+	beam.Width1 = 8
+	beam.LightEmission = 1
+	beam.LightInfluence = 0
+	beam.Color = ColorSequence.new(Color3.fromRGB(150, 170, 255))
+	beam.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(1, 1) })
+	beam.Segments = 1
+	beam.Parent = glass
+end
+
+-- Toile d'araignée dans un coin du plafond
+local function cobweb(corner: Vector3, dirX: number, dirZ: number)
+	for i = 0, 4 do
+		local a = math.rad(i * 22.5)
+		local len = 4.5
+		local tip = corner + Vector3.new(dirX * math.cos(a) * len, -math.sin(a) * len * 0.6 - 0.3, dirZ * math.sin(a) * len)
+		local mid = (corner + tip) / 2
+		part({ Name = "Toile", Size = Vector3.new(0.04, 0.04, (tip - corner).Magnitude), CFrame = CFrame.lookAt(mid, tip), Color = Color3.fromRGB(220, 220, 220), Material = Enum.Material.SmoothPlastic, Transparency = 0.55, CanCollide = false })
+	end
+	for r = 1, 3 do
+		local prev: Vector3? = nil
+		for i = 0, 4 do
+			local a = math.rad(i * 22.5)
+			local len = r * 1.3
+			local pt = corner + Vector3.new(dirX * math.cos(a) * len, -math.sin(a) * len * 0.6 - 0.3, dirZ * math.sin(a) * len)
+			if prev then
+				part({ Name = "Toile", Size = Vector3.new(0.03, 0.03, (pt - prev).Magnitude), CFrame = CFrame.lookAt((prev + pt) / 2, pt), Color = Color3.fromRGB(220, 220, 220), Transparency = 0.6, CanCollide = false })
+			end
+			prev = pt
+		end
+	end
+end
+
+-- Griffures sur un mur
+local function clawMarks(pos: Vector3, inward: Vector3)
+	local cf = CFrame.lookAt(pos, pos + inward)
+	for i = -1, 1 do
+		part({ Name = "Griffure", Size = Vector3.new(0.18, 3.2, 0.05), CFrame = cf * CFrame.new(i * 0.55, -i * 0.15, 0) * CFrame.Angles(0, 0, math.rad(18)), Color = Color3.fromRGB(70, 8, 10), Material = Enum.Material.SmoothPlastic, CanCollide = false })
+	end
+end
+
+-- Message écrit sur un mur
+local function wallWriting(pos: Vector3, inward: Vector3, msg: string)
+	local p = part({ Name = "Inscription", Size = Vector3.new(10, 3, 0.05), CFrame = CFrame.lookAt(pos, pos + inward), Transparency = 1, CanCollide = false })
+	local sg = surfaceText(p, Enum.NormalId.Front, msg, Color3.fromRGB(110, 10, 12), Enum.Font.Creepster)
+	sg.LightInfluence = 1
+end
+
+-- Lustre à bougies (allumé avec le courant)
+local function chandelier(c: Vector3): PointLight
+	part({ Name = "Chaine", Size = Vector3.new(0.15, 2.4, 0.15), CFrame = CFrame.new(c.X, WALL_H - 1.2, c.Z), Color = Color3.fromRGB(40, 38, 35), Material = Enum.Material.Metal, CanCollide = false })
+	local ring = part({ Name = "Lustre", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.3, 5, 5), CFrame = CFrame.new(c.X, WALL_H - 2.5, c.Z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(70, 60, 40), Material = Enum.Material.Metal, CanCollide = false })
+	for i = 0, 5 do
+		local a = i / 6 * math.pi * 2
+		local p = Vector3.new(c.X + math.cos(a) * 2.2, WALL_H - 2.2, c.Z + math.sin(a) * 2.2)
+		part({ Name = "BougieLustre", Size = Vector3.new(0.25, 0.7, 0.25), CFrame = CFrame.new(p), Color = Color3.fromRGB(230, 220, 195), CanCollide = false })
+		part({ Name = "FlammeLustre", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.25, CFrame = CFrame.new(p + Vector3.new(0, 0.5, 0)), Color = Color3.fromRGB(255, 200, 110), Material = Enum.Material.Neon, Transparency = 1, CanCollide = false })
+		part({ Name = "Pampille", Size = Vector3.new(0.12, 0.6, 0.12), CFrame = CFrame.new(c.X + math.cos(a + 0.5) * 2.4, WALL_H - 3.1, c.Z + math.sin(a + 0.5) * 2.4), Color = Color3.fromRGB(200, 220, 255), Material = Enum.Material.Glass, Transparency = 0.3, CanCollide = false })
+	end
+	local l = light(ring, Color3.fromRGB(255, 205, 140), 42, 1.2)
+	l.Enabled = false
+	return l
 end
 
 local wardrobes = {}
@@ -399,6 +517,13 @@ end
 local function powerOn()
 	round.power = true
 	refreshInventory()
+	task.delay(0.6, function()
+		for _, d in Manor:GetDescendants() do
+			if d.Name == "FlammeLustre" and d:IsA("BasePart") then
+				d.Transparency = 0
+			end
+		end
+	end)
 	for _, l in round.roomLights do
 		task.spawn(function()
 			for _ = 1, 4 do
@@ -521,10 +646,69 @@ local function buildManor()
 	round.roomLights = {}
 	for _, r in ROOMS do
 		local c = roomCenter(r)
-		local lamp = part({ Name = "Lustre", Size = Vector3.new(3, 1, 3), CFrame = CFrame.new(c.X, WALL_H - 1, c.Z), Color = Color3.fromRGB(200, 180, 120), Material = Enum.Material.Glass, CanCollide = false })
-		local l = light(lamp, Color3.fromRGB(255, 220, 160), 45, 1.1)
-		l.Enabled = false
-		table.insert(round.roomLights, l)
+		table.insert(round.roomLights, chandelier(c))
+		-- Poussière qui flotte dans la pièce
+		local dustBox = part({ Name = "Poussiere", Size = Vector3.new(r.x2 - r.x1 - 2, WALL_H - 2, r.z2 - r.z1 - 2), CFrame = CFrame.new(c.X, WALL_H / 2, c.Z), Transparency = 1, CanCollide = false })
+		local dust = Instance.new("ParticleEmitter")
+		dust.Shape = Enum.ParticleEmitterShape.Box
+		dust.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+		dust.Rate = math.clamp((r.x2 - r.x1) * (r.z2 - r.z1) / 300, 3, 12)
+		dust.Lifetime = NumberRange.new(8, 14)
+		dust.Speed = NumberRange.new(0.1, 0.4)
+		dust.SpreadAngle = Vector2.new(180, 180)
+		dust.Size = NumberSequence.new(0.09)
+		dust.Color = ColorSequence.new(Color3.fromRGB(220, 215, 200))
+		dust.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.3, 0.45), NumberSequenceKeypoint.new(0.7, 0.45), NumberSequenceKeypoint.new(1, 1) })
+		dust.LightEmission = 0.4
+		dust.LightInfluence = 1
+		dust.Parent = dustBox
+		-- Toiles d'araignée dans deux coins
+		cobweb(Vector3.new(r.x1 + 0.6, WALL_H - 0.2, r.z1 + 0.6), 1, 1)
+		cobweb(Vector3.new(r.x2 - 0.6, WALL_H - 0.2, r.z2 - 0.6), -1, -1)
+	end
+
+	-- Fenêtres sur les murs extérieurs
+	for _, x in { -66, -44, -14, 12, 36 } do
+		moonWindow(Vector3.new(x, 7.5, -59.3), Vector3.new(0, 0, 1))
+	end
+	for _, x in { -62, -42, 42, 62 } do
+		moonWindow(Vector3.new(x, 7.5, 59.3), Vector3.new(0, 0, -1))
+	end
+	for _, z in { -46, -24, 24, 46 } do
+		moonWindow(Vector3.new(-79.3, 7.5, z), Vector3.new(1, 0, 0))
+		moonWindow(Vector3.new(79.3, 7.5, z), Vector3.new(-1, 0, 0))
+	end
+
+	-- Traces du Veilleur
+	clawMarks(Vector3.new(60, 6, -59.4), Vector3.new(0, 0, 1))
+	clawMarks(Vector3.new(-30.6, 5, -20), Vector3.new(1, 0, 0))
+	clawMarks(Vector3.new(30, 7, 5.4), Vector3.new(0, 0, -1))
+	wallWriting(Vector3.new(79.3, 11.6, 0), Vector3.new(-1, 0, 0), "IL VOIT TA LUMIÈRE")
+	wallWriting(Vector3.new(52, 9, -59.3), Vector3.new(0, 0, 1), "NE COURS PAS")
+	wallWriting(Vector3.new(60, 8, -89.3), Vector3.new(0, 0, 1), "IL DORT ICI")
+
+	-- Orage : pluie autour du manoir
+	local rainZones = {
+		{ CFrame.new(0, 70, 140), Vector3.new(320, 1, 160) },
+		{ CFrame.new(0, 70, -170), Vector3.new(320, 1, 160) },
+		{ CFrame.new(-150, 70, -15), Vector3.new(140, 1, 150) },
+		{ CFrame.new(150, 70, -15), Vector3.new(140, 1, 150) },
+	}
+	for _, z in rainZones do
+		local cloud = part({ Name = "Pluie", Size = z[2], CFrame = z[1], Transparency = 1, CanCollide = false })
+		local rain = Instance.new("ParticleEmitter")
+		rain.Shape = Enum.ParticleEmitterShape.Box
+		rain.EmissionDirection = Enum.NormalId.Bottom
+		rain.Rate = 600
+		rain.Lifetime = NumberRange.new(0.9, 1)
+		rain.Speed = NumberRange.new(75, 85)
+		rain.Size = NumberSequence.new(0.12)
+		rain.Squash = NumberSequence.new(4)
+		rain.Color = ColorSequence.new(Color3.fromRGB(170, 185, 220))
+		rain.Transparency = NumberSequence.new(0.55)
+		rain.LightEmission = 0.2
+		rain.Orientation = Enum.ParticleOrientation.FacingCameraWorldUp
+		rain.Parent = cloud
 	end
 
 	-- HALL ---------------------------------------------------------------
@@ -754,42 +938,240 @@ local monster = {
 	pauseUntil = 0,
 	speed = MONSTER_PATROL_SPEED,
 	t = 0,
+	phase = 0,
+	lean = nil :: number?,
 }
 
-local MONSTER_HEIGHT = 6.9 -- hauteur du centre du torse au-dessus du sol
+local MONSTER_HEIGHT = 5.4 -- hauteur des hanches au-dessus du sol
+
+-- Squelette articulé : chaque pièce appartient à un « groupe » animé par le script
+type RigPart = { part: BasePart, group: string, offset: CFrame }
+local rig: { RigPart } = {}
+local rigParts: { BasePart } = {}
+local rigCFrames: { CFrame } = {}
+local eyeParts: { BasePart } = {}
+local headTwitch = { yaw = 0, roll = 0, pitch = 0, next = 0 }
+
+local SKIN = Color3.fromRGB(28, 24, 27)
+local BONE = Color3.fromRGB(168, 156, 134)
+local EYE = Color3.fromRGB(255, 18, 8)
 
 local function buildMonster(): Model
 	local m = Instance.new("Model")
 	m.Name = "LeVeilleur"
-	local skin = Color3.fromRGB(20, 18, 24)
-	local function add(props)
+	table.clear(rig)
+	table.clear(rigParts)
+	table.clear(rigCFrames)
+	table.clear(eyeParts)
+
+	local function add(group: string, offset: CFrame, props: { [string]: any }): BasePart
 		props.CanCollide = false
+		props.CanQuery = false
+		props.CastShadow = true
 		props.Parent = m
-		return part(props)
+		props.CFrame = offset
+		local p = part(props)
+		table.insert(rig, { part = p, group = group, offset = offset })
+		table.insert(rigParts, p)
+		table.insert(rigCFrames, offset)
+		return p
 	end
-	local torso = add({ Name = "Torse", Size = Vector3.new(2.6, 5, 1.4), CFrame = CFrame.new(0, 0, 0), Color = skin, Material = Enum.Material.SmoothPlastic })
-	add({ Name = "Tete", Size = Vector3.new(1.8, 2.4, 1.8), CFrame = CFrame.new(0, 3.9, -0.3), Color = Color3.fromRGB(205, 200, 195), Material = Enum.Material.SmoothPlastic })
-	for _, s in { -1, 1 } do
-		add({ Name = "Oeil", Size = Vector3.new(0.5, 0.35, 0.2), CFrame = CFrame.new(s * 0.45, 4.2, -1.25), Color = Color3.new(1, 1, 1), Material = Enum.Material.Neon })
-		add({ Name = "Bras", Size = Vector3.new(0.6, 7.5, 0.6), CFrame = CFrame.new(s * 1.7, -1.4, -0.4) * CFrame.Angles(math.rad(-12), 0, 0), Color = skin })
-		add({ Name = "Griffe", Size = Vector3.new(0.9, 1.2, 0.3), CFrame = CFrame.new(s * 1.7, -5.3, -1.2), Color = Color3.fromRGB(120, 110, 100), Material = Enum.Material.Slate })
-		add({ Name = "Jambe", Size = Vector3.new(0.7, 4, 0.7), CFrame = CFrame.new(s * 0.7, -4.3, 0), Color = skin })
+
+	-- Torse décharné, côtes et colonne hérissée
+	local root = add("body", CFrame.new(0, 2, 0), { Name = "Torse", Size = Vector3.new(2.4, 4.2, 1.5), Color = SKIN, Material = Enum.Material.Slate })
+	add("body", CFrame.new(0, 0.1, 0), { Name = "Bassin", Size = Vector3.new(2, 1.2, 1.3), Color = SKIN, Material = Enum.Material.Slate })
+	for i = 0, 5 do
+		local y = 1.2 + i * 0.5
+		add("body", CFrame.new(0, y, -0.78), { Name = "Cote", Size = Vector3.new(2.2 - math.abs(i - 2.5) * 0.15, 0.16, 0.12), Color = BONE, Material = Enum.Material.Limestone })
 	end
-	add({ Name = "Bouche", Size = Vector3.new(1, 0.35, 0.2), CFrame = CFrame.new(0, 3.2, -1.25), Color = Color3.fromRGB(60, 0, 0), Material = Enum.Material.Neon })
-	local glow = light(torso, Color3.fromRGB(150, 20, 30), 16, 0.8)
-	glow.Shadows = false
+	add("body", CFrame.new(0, 2.4, -0.8), { Name = "Sternum", Size = Vector3.new(0.3, 2.6, 0.14), Color = BONE, Material = Enum.Material.Limestone })
+	for i = 0, 5 do
+		add("body", CFrame.new(0, 0.6 + i * 0.7, 0.85) * CFrame.Angles(math.rad(35), 0, 0), {
+			ClassName = "WedgePart", Name = "Epine", Size = Vector3.new(0.25, 0.9 - i * 0.05, 0.7), Color = BONE, Material = Enum.Material.Limestone,
+		})
+	end
+	-- Bosse et lambeaux qui pendent du dos
+	add("body", CFrame.new(0, 3.2, 0.7), { Name = "Bosse", Shape = Enum.PartType.Ball, Size = Vector3.one * 2.6, Color = SKIN, Material = Enum.Material.Slate })
+	for i = 0, 6 do
+		local x = -1.3 + i * 0.43
+		local len = 2.2 + (i * 37 % 7) * 0.35
+		add("body", CFrame.new(x, 3.4 - len / 2, 0.9 + math.abs(x) * 0.15) * CFrame.Angles(math.rad(8 + (i % 3) * 6), 0, math.rad((i - 3) * 4)), {
+			Name = "Lambeau", Size = Vector3.new(0.38, len, 0.06), Color = Color3.fromRGB(12, 10, 12), Material = Enum.Material.Fabric, Transparency = 0.1,
+		})
+	end
+	-- Cou et crâne allongé
+	add("neck", CFrame.new(0, 0.7, -0.1), { Name = "Cou", Size = Vector3.new(0.6, 1.6, 0.6), Color = SKIN, Material = Enum.Material.Slate })
+	local skull = add("neck", CFrame.new(0, 1.9, -0.6), { Name = "Crane", Size = Vector3.new(1.7, 1.5, 2.6), Color = BONE, Material = Enum.Material.Limestone })
+	add("neck", CFrame.new(0, 2.55, 0.1), { Name = "Crete", Size = Vector3.new(0.9, 0.5, 2.2), Color = Color3.fromRGB(160, 150, 130), Material = Enum.Material.Limestone })
+	-- Arcade sourcilière et cavité nasale
+	add("neck", CFrame.new(0, 2.75, -1.55) * CFrame.Angles(math.rad(-20), 0, 0), { Name = "Arcade", Size = Vector3.new(1.9, 0.35, 0.6), Color = Color3.fromRGB(120, 110, 95), Material = Enum.Material.Limestone })
+	add("neck", CFrame.new(0, 1.6, -1.92), { Name = "Nez", Size = Vector3.new(0.35, 0.45, 0.1), Color = Color3.new(0, 0, 0) })
+	-- Cornes recourbées vers l'arrière
+	for _, sx in { -1, 1 } do
+		local base = CFrame.new(sx * 0.6, 2.6, 0.5)
+		local seg = base
+		for k = 1, 4 do
+			local len = 1.3 - k * 0.18
+			seg = seg * CFrame.Angles(math.rad(-38), 0, math.rad(sx * -8)) * CFrame.new(0, len / 2, 0)
+			add("neck", seg, { Name = "Corne", Size = Vector3.new(0.42 - k * 0.07, len, 0.42 - k * 0.07), Color = Color3.fromRGB(40, 34, 30), Material = Enum.Material.Basalt })
+			seg = seg * CFrame.new(0, len / 2, 0)
+		end
+	end
+	-- Longs crocs qui dépassent
+	for _, sx in { -1, 1 } do
+		add("neck", CFrame.new(sx * 0.55, 0.75, -1.85) * CFrame.Angles(math.rad(180), 0, 0), {
+			ClassName = "WedgePart", Name = "GrandCroc", Size = Vector3.new(0.16, 1.2, 0.25), Color = Color3.fromRGB(240, 235, 215), Material = Enum.Material.Limestone,
+		})
+	end
+	-- Six yeux rouges, de tailles différentes
+	local eyeSpots = { { -0.55, 2.15, -1.85, 0.32 }, { 0.55, 2.15, -1.85, 0.32 }, { -0.35, 2.5, -1.7, 0.2 }, { 0.38, 2.48, -1.7, 0.22 }, { -0.72, 1.82, -1.6, 0.18 }, { 0.7, 1.85, -1.6, 0.16 } }
+	for _, e in eyeSpots do
+		add("neck", CFrame.new(e[1], e[2], e[3] - 0.05), { Name = "Orbite", Shape = Enum.PartType.Ball, Size = Vector3.one * (e[4] + 0.18), Color = Color3.new(0, 0, 0) })
+		local eye = add("neck", CFrame.new(e[1], e[2], e[3] - 0.22), { Name = "Oeil", Shape = Enum.PartType.Ball, Size = Vector3.one * e[4], Color = EYE, Material = Enum.Material.Neon })
+		table.insert(eyeParts, eye)
+	end
+	-- Mâchoire supérieure et crocs
+	for i = 0, 5 do
+		local x = -0.62 + i * 0.25
+		add("neck", CFrame.new(x, 1.15, -1.75) * CFrame.Angles(math.rad(180), 0, 0), {
+			ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.12, 0.55 + (i % 2) * 0.25, 0.18), Color = Color3.fromRGB(235, 228, 205), Material = Enum.Material.Limestone,
+		})
+	end
+	local mouthGlow = add("neck", CFrame.new(0, 1.05, -1.2), { Name = "Gorge", Size = Vector3.new(1.1, 0.4, 1), Color = Color3.fromRGB(120, 0, 0), Material = Enum.Material.Neon })
+	-- Mâchoire inférieure (s'ouvre)
+	add("jaw", CFrame.new(0, -0.2, -0.9), { Name = "Machoire", Size = Vector3.new(1.4, 0.35, 2), Color = BONE, Material = Enum.Material.Limestone })
+	for i = 0, 5 do
+		local x = -0.62 + i * 0.25
+		add("jaw", CFrame.new(x, 0.2, -1.75), {
+			ClassName = "WedgePart", Name = "Croc", Size = Vector3.new(0.12, 0.5 + ((i + 1) % 2) * 0.2, 0.18), Color = Color3.fromRGB(235, 228, 205), Material = Enum.Material.Limestone,
+		})
+	end
+	-- Bras démesurés
+	for _, side in { "L", "R" } do
+		local s = if side == "L" then -1 else 1
+		add("arm" .. side, CFrame.new(0, -2, 0), { Name = "Bras", Size = Vector3.new(0.65, 4.2, 0.65), Color = SKIN, Material = Enum.Material.Slate })
+		add("arm" .. side, CFrame.new(0, 0, 0), { Name = "Epaule", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.1, Color = BONE, Material = Enum.Material.Limestone })
+		add("fore" .. side, CFrame.new(0, -2.3, 0), { Name = "AvantBras", Size = Vector3.new(0.5, 4.6, 0.5), Color = SKIN, Material = Enum.Material.Slate })
+		add("fore" .. side, CFrame.new(0, -4.8, -0.1), { Name = "Main", Size = Vector3.new(0.8, 0.6, 0.9), Color = SKIN, Material = Enum.Material.Slate })
+		for k = 0, 3 do
+			local x = (-0.36 + k * 0.24) * s
+			add("fore" .. side, CFrame.new(x, -5.1, -0.35) * CFrame.Angles(math.rad(-25), 0, 0), { Name = "Doigt", Size = Vector3.new(0.14, 1.1, 0.14), Color = SKIN, Material = Enum.Material.Slate })
+			add("fore" .. side, CFrame.new(x, -6.3, -0.95) * CFrame.Angles(math.rad(-35), 0, 0), {
+				ClassName = "WedgePart", Name = "Griffe", Size = Vector3.new(0.1, 2.2 - math.abs(k - 1.5) * 0.3, 0.26), Color = Color3.fromRGB(25, 22, 20), Material = Enum.Material.Basalt,
+			})
+		end
+		-- Jambes aux genoux inversés
+		add("leg" .. side, CFrame.new(0, -1.4, 0), { Name = "Cuisse", Size = Vector3.new(0.85, 2.9, 0.85), Color = SKIN, Material = Enum.Material.Slate })
+		add("shin" .. side, CFrame.new(0, -1.4, 0), { Name = "Tibia", Size = Vector3.new(0.6, 2.9, 0.6), Color = SKIN, Material = Enum.Material.Slate })
+		add("shin" .. side, CFrame.new(0, -2.95, -0.55), { Name = "Pied", Size = Vector3.new(0.7, 0.35, 1.6), Color = SKIN, Material = Enum.Material.Slate })
+		for k = -1, 1, 2 do
+			add("shin" .. side, CFrame.new(k * 0.22, -2.95, -1.5) * CFrame.Angles(math.rad(-90), 0, 0), {
+				ClassName = "WedgePart", Name = "Ergot", Size = Vector3.new(0.12, 0.7, 0.25), Color = Color3.fromRGB(30, 26, 22), Material = Enum.Material.Basalt,
+			})
+		end
+	end
+
+	-- Lueurs et fumée
+	local eyeLight = light(skull, EYE, 14, 1.4)
+	eyeLight.Shadows = false
+	local throat = light(mouthGlow, Color3.fromRGB(200, 20, 10), 8, 0.6)
+	throat.Shadows = false
 	local smoke = Instance.new("ParticleEmitter")
-	smoke.Color = ColorSequence.new(Color3.fromRGB(10, 10, 12))
-	smoke.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 2), NumberSequenceKeypoint.new(1, 4) })
-	smoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 1) })
-	smoke.Lifetime = NumberRange.new(1, 1.6)
-	smoke.Rate = 18
-	smoke.Speed = NumberRange.new(0.5, 1.5)
+	smoke.Color = ColorSequence.new(Color3.fromRGB(8, 6, 10))
+	smoke.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.5), NumberSequenceKeypoint.new(1, 5) })
+	smoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) })
+	smoke.Lifetime = NumberRange.new(1.2, 2)
+	smoke.Rate = 22
+	smoke.Speed = NumberRange.new(0.3, 1.2)
 	smoke.SpreadAngle = Vector2.new(180, 180)
-	smoke.Parent = torso
-	m.PrimaryPart = torso
+	smoke.RotSpeed = NumberRange.new(-40, 40)
+	smoke.Parent = root
+	local drip = Instance.new("ParticleEmitter")
+	drip.Name = "Bave"
+	drip.Color = ColorSequence.new(Color3.fromRGB(120, 10, 10))
+	drip.Size = NumberSequence.new(0.12)
+	drip.Lifetime = NumberRange.new(0.6, 0.9)
+	drip.Rate = 6
+	drip.Speed = NumberRange.new(0, 0.5)
+	drip.Acceleration = Vector3.new(0, -30, 0)
+	drip.LightEmission = 0.3
+	drip.Parent = mouthGlow
+	m:SetAttribute("Jaw", 0)
+	m.PrimaryPart = root
 	m.Parent = Manor
 	return m
+end
+
+-- Pose procédurale : marche courbée, tête qui se tord, chasse à quatre pattes
+local function animateMonster(dt: number, now: number)
+	local mdl = monster.model
+	if not mdl then
+		return
+	end
+	local chasing = monster.state == "chasse"
+	local feasting = monster.state == "festin"
+	local moving = #monster.waypoints > 0 and not feasting
+	monster.phase = (monster.phase or 0) + dt * (if moving then monster.speed * 0.42 else 1.2)
+	local ph = monster.phase
+
+	-- Posture qui change en douceur
+	local targetLean = if chasing then math.rad(68) elseif feasting then math.rad(75) else math.rad(42)
+	monster.lean = (monster.lean or targetLean) + (targetLean - (monster.lean or targetLean)) * math.min(1, dt * 4)
+	local lean = monster.lean
+
+	-- Tête : à-coups brusques en patrouille, fixe en chasse
+	if now > headTwitch.next then
+		headTwitch.next = now + (if chasing then 0.25 else 0.4 + math.random() * 1.6)
+		headTwitch.yaw = if chasing then (math.random() - 0.5) * 0.15 else (math.random() - 0.5) * 1.4
+		headTwitch.roll = if chasing then 0 else (math.random() - 0.5) * 1.1
+		headTwitch.pitch = (math.random() - 0.5) * 0.4
+	end
+	local jaw = if chasing then -math.rad(38) - math.sin(now * 14) * 0.12
+		elseif feasting then -math.abs(math.sin(now * 16)) * math.rad(45)
+		else -math.rad(6) - math.max(0, math.sin(now * 0.9)) * 0.25
+
+	local swing = if moving then math.sin(ph) else 0
+	local swing2 = if moving then math.sin(ph + math.pi) else 0
+	local bob = if moving then math.abs(math.sin(ph)) * 0.35 else math.sin(now * 2) * 0.06
+
+	local G: { [string]: CFrame } = {}
+	G.body = CFrame.new(0, bob, 0) * CFrame.Angles(-lean, 0, swing * 0.08)
+	G.neck = G.body * CFrame.new(0, 4.1, -0.3) * CFrame.Angles(lean * 0.85 + headTwitch.pitch, headTwitch.yaw, headTwitch.roll)
+	G.jaw = G.neck * CFrame.new(0, 1.1, -0.5) * CFrame.Angles(jaw, 0, 0)
+	for _, side in { "L", "R" } do
+		local s = if side == "L" then -1 else 1
+		local sw = if side == "L" then swing else swing2
+		local armPitch, elbow
+		if chasing then
+			-- Les bras griffent le sol vers l'avant, comme un animal
+			armPitch = lean + 0.35 + sw * 0.9
+			elbow = 0.5 + math.max(0, -sw) * 0.8
+		elseif feasting then
+			armPitch = lean + 0.9 + math.sin(now * 12 + s) * 0.2
+			elbow = 1.4
+		else
+			armPitch = lean * 0.75 + sw * 0.35
+			elbow = 0.25 + math.sin(now * 1.3 + s) * 0.08
+		end
+		G["arm" .. side] = G.body * CFrame.new(s * 1.6, 3.6, -0.1) * CFrame.Angles(armPitch, 0, s * 0.18)
+		G["fore" .. side] = G["arm" .. side] * CFrame.new(0, -4.1, 0) * CFrame.Angles(elbow, 0, 0)
+		local thigh = 0.45 + sw * (if chasing then 0.75 else 0.45)
+		G["leg" .. side] = CFrame.new(s * 0.75, bob, 0) * CFrame.Angles(thigh, 0, 0)
+		G["shin" .. side] = G["leg" .. side] * CFrame.new(0, -2.8, 0) * CFrame.Angles(-0.95 - math.max(0, sw) * 0.4, 0, 0)
+	end
+
+	local tremor = CFrame.Angles(0, 0, math.sin(now * 23) * 0.012)
+	local rootCF = CFrame.lookAt(monster.pos, monster.pos + monster.facing) * tremor
+	for i, r in rig do
+		rigCFrames[i] = rootCF * (G[r.group] or CFrame.identity) * r.offset
+	end
+	workspace:BulkMoveTo(rigParts, rigCFrames, Enum.BulkMoveMode.FireCFrameChanged)
+
+	-- Les yeux palpitent, plus vifs en chasse
+	local glow = if chasing then 0 else 0.25 + math.sin(now * 3) * 0.15
+	for _, e in eyeParts do
+		e.Transparency = glow
+	end
 end
 
 local losParams = RaycastParams.new()
@@ -908,6 +1290,14 @@ local function sense(now: number)
 	end
 	if best and bestPos then
 		if monster.state ~= "chasse" or monster.target ~= best then
+			if monster.state ~= "chasse" then
+				for _, plr in Players:GetPlayers() do
+					local h = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+					if h and (h.Position - monster.pos).Magnitude < 90 then
+						ScreechRemote:FireClient(plr, monster.pos)
+					end
+				end
+			end
 			monster.state = "chasse"
 			monster.target = best
 			monster.waypoints = {}
@@ -928,6 +1318,7 @@ local function updateMonster(dt: number, now: number)
 	end
 	monster.t += dt
 	if now < monster.pauseUntil then
+		animateMonster(dt, now)
 		return
 	end
 	if monster.state == "festin" then
@@ -975,10 +1366,7 @@ local function updateMonster(dt: number, now: number)
 		end
 	end
 
-	-- Démarche saccadée
-	local twitch = math.sin(monster.t * 9) * 0.25 + (if math.random() < 0.02 then 0.6 else 0)
-	local p = monster.pos + Vector3.new(0, math.abs(twitch), 0)
-	monster.model:PivotTo(CFrame.lookAt(p, p + monster.facing) * CFrame.Angles(0, 0, math.sin(monster.t * 4.5) * 0.06))
+	animateMonster(dt, now)
 	if Remotes:GetAttribute("MonsterState") ~= monster.state then
 		Remotes:SetAttribute("MonsterState", monster.state)
 	end
@@ -1003,6 +1391,28 @@ local function setupLamp(player: Player, char: Model)
 	spot.Face = Enum.NormalId.Front
 	spot.Enabled = false
 	spot.Parent = head
+	-- Cône de lumière visible
+	local a0 = Instance.new("Attachment")
+	a0.Name = "LampeA0"
+	a0.Position = Vector3.new(0, 0, -0.8)
+	a0.Parent = head
+	local a1 = Instance.new("Attachment")
+	a1.Name = "LampeA1"
+	a1.Position = Vector3.new(0, 0, -26)
+	a1.Parent = head
+	local cone = Instance.new("Beam")
+	cone.Name = "Faisceau"
+	cone.Attachment0 = a0
+	cone.Attachment1 = a1
+	cone.FaceCamera = true
+	cone.Width0 = 0.8
+	cone.Width1 = 16
+	cone.LightEmission = 1
+	cone.LightInfluence = 0
+	cone.Color = ColorSequence.new(Color3.fromRGB(255, 240, 200))
+	cone.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.72), NumberSequenceKeypoint.new(1, 1) })
+	cone.Enabled = false
+	cone.Parent = head
 	lampOn[player] = false
 	player:SetAttribute("Lamp", false)
 end
@@ -1018,6 +1428,10 @@ local function setLamp(player: Player, on: boolean)
 	player:SetAttribute("Lamp", on)
 	if spot then
 		spot.Enabled = on
+	end
+	local cone = head and head:FindFirstChild("Faisceau") :: Beam?
+	if cone then
+		cone.Enabled = on
 	end
 end
 
@@ -1195,6 +1609,14 @@ task.spawn(function()
 			RoundRemote:FireAllClients("pause", s)
 			task.wait(1)
 		end
+	end
+end)
+
+-- Orage : éclairs réguliers
+task.spawn(function()
+	while true do
+		task.wait(math.random(16, 38))
+		LightningRemote:FireAllClients(math.random())
 	end
 end)
 

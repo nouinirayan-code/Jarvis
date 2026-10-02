@@ -5,6 +5,10 @@ Résous les énigmes et fuis avant l'aube… sans te faire attraper.
 
 **Tout le manoir est généré par le code** : il suffit de coller deux scripts dans Roblox Studio.
 
+![Aperçu : le Veilleur charge dans le couloir](docs/apercu-couloir.png)
+
+*Aperçus calculés hors de Roblox à partir des scripts (rendu 3D approché) : le jeu réel utilise l'éclairage de Roblox.*
+
 ![Plan du manoir](docs/plan-du-manoir.png)
 
 ## Comment s'échapper
@@ -26,6 +30,29 @@ Résous les énigmes et fuis avant l'aube… sans te faire attraper.
 - La manche dure **8 minutes**. Le jeu se joue seul ou **à plusieurs, en coopération** : les fusibles et la clé
   sont partagés par toute l'équipe.
 
+## Le Veilleur
+
+![Le Veilleur en patrouille et en chasse](docs/le-veilleur.png)
+
+Une créature articulée d'une centaine de pièces, animée en continu par le script :
+- corps décharné et voûté, **côtes apparentes**, colonne hérissée de pics, **bosse** et **lambeaux** qui pendent ;
+- **crâne cornu** aux **six yeux rouges** lumineux, **mâchoire qui s'ouvre** sur deux rangées de crocs, bave rougeoyante ;
+- **bras démesurés** à quatre griffes, **jambes aux genoux inversés**, fumée noire autour du corps ;
+- **en patrouille** : il marche courbé, la tête se tord par à-coups ; **en chasse** : il charge **à quatre pattes**,
+  gueule grande ouverte, et pousse un **hurlement** (« IL T'A VU », écran qui tremble).
+
+## Effets visuels
+
+- **Orage** : pluie autour du manoir, **éclairs** qui illuminent tout, tonnerre qui fait trembler l'écran.
+- **Fenêtres au clair de lune** avec rideaux et **rayons de lumière** visibles ; **poussière** qui flotte dans chaque pièce.
+- **Lampe torche** avec **cône de lumière** visible et ombres ; elle **vacille** quand la batterie est faible.
+- Bougies qui **vacillent**, **lustres** qui se rallument avec le courant, **toiles d'araignée**, **griffures** et
+  **inscriptions sanglantes** sur les murs, **portraits dont les yeux s'allument** quand le Veilleur approche.
+- **Peur** : quand il s'approche, l'image se **désature**, se **trouble** et rougit au rythme des **battements de cœur** ;
+  le champ de vision se resserre et la caméra tremble. Balancement de la caméra en marchant, rayures de vieux film.
+- **Jumpscare** : crâne à six yeux et crocs qui fonce sur l'écran, flou et flash rouge.
+- Post-traitement : halo lumineux (bloom), profondeur de champ, étalonnage froid, nuages d'orage.
+
 ## Installation dans Roblox Studio (5 minutes)
 
 1. Ouvre **Roblox Studio** et crée un jeu avec le modèle **Baseplate**
@@ -37,8 +64,10 @@ Résous les énigmes et fuis avant l'aube… sans te faire attraper.
      renomme-le `ManoirClient` et colle le contenu de [`src/client/ManoirClient.client.luau`](src/client/ManoirClient.client.luau).
 3. Appuie sur **Jouer** (F5). Le Veilleur se réveille 25 secondes après le début…
 
-> 💡 Pour un rendu plus effrayant : dans l'Explorer, sélectionne **Lighting** et mets la propriété
-> **Technology** sur **Future** (les ombres de la lampe torche seront bien plus belles).
+> 💡 **Important pour les graphismes** : dans l'Explorer, sélectionne **Lighting** et mets la propriété
+> **Technology** sur **Future** (Roblox ne permet pas de la changer par script). Les ombres de la lampe,
+> des fenêtres et des bougies seront bien plus belles. Dans les paramètres de Roblox, monte aussi
+> la **qualité graphique** au maximum pour voir la pluie, la poussière et les rayons de lune.
 
 Avec [Rojo](https://rojo.space) : `rojo serve` (le fichier `default.project.json` place les scripts).
 
