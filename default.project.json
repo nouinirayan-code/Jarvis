@@ -1,0 +1,18 @@
+{
+  "name": "ManoirDesOmbres",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "ManoirServeur": {
+        "$path": "src/server/ManoirServeur.server.luau"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "ManoirClient": {
+          "$path": "src/client/ManoirClient.client.luau"
+        }
+      }
+    }
+  }
+}

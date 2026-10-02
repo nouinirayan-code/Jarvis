@@ -1,68 +1,57 @@
-# 🔥 Dernière Lueur
+# 🕯️ Le Manoir des Ombres — escape horreur pour Roblox
 
-Jeu d'action et de survie en vue de dessus, jouable dans le navigateur.
-Le monde a sombré dans les ténèbres : vous veillez sur **le dernier foyer**.
+Tu es enfermé, la nuit, dans un manoir plongé dans le noir. Quelque chose y rôde : **le Veilleur**.
+Résous les énigmes et fuis avant l'aube… sans te faire attraper.
 
-- **Le jour**, explorez, coupez du bois, cassez des pierres, trouvez des cristaux de braise et bâtissez vos défenses.
-- **La nuit**, les ombres surgissent des ténèbres pour éteindre le foyer. Combattez-les à l'épée.
-- **La lumière est votre arme** : dans la lumière du foyer, des torches et des phares, les ombres sont ralenties
-  et subissent +50 % de dégâts. Loin de la lumière, votre lanterne se vide et le froid vous ronge.
-- Les ombres vaincues laissent des **braises** : elles nourrissent la flamme et permettent d'acheter des améliorations.
-- Vous ne pouvez **bâtir que dans la lumière** : chaque torche agrandit votre territoire.
-- Si vous tombez, la flamme vous ranime au prix d'une partie de son combustible.
-  **Si la flamme s'éteint ou si le foyer est détruit, la partie est perdue.**
-- À l'aube, les ombres restantes brûlent. Toutes les 5 nuits, le **Dévoreur** attaque.
+**Tout le manoir est généré par le code** : il suffit de coller deux scripts dans Roblox Studio.
 
-Aucune dépendance ni compilation : HTML5 Canvas et JavaScript pur.
+![Plan du manoir](docs/plan-du-manoir.png)
 
-> 🏝️ Ce dépôt contient aussi **L'Île des Reliques**, un jeu d'aventure pour **Roblox** : voir le dossier [`roblox/`](roblox/README.md).
+## Comment s'échapper
 
-## Lancer le jeu
+1. **Trouver les 3 fusibles** cachés dans le manoir.
+2. **Rétablir le courant** au boîtier électrique de la **cave** (derrière la cuisine).
+   Les lumières se rallument… et la porte du **bureau** se déverrouille. Mais le Veilleur devient plus rapide.
+3. **Trouver le code du coffre-fort** : un carnet dans la bibliothèque explique que le code est l'heure à laquelle
+   **l'horloge de la salle à manger** s'est arrêtée (le code change à chaque partie !).
+4. **Prendre la clé maîtresse** dans le coffre, **ouvrir la porte d'entrée** et courir jusqu'au portail.
 
-Ouvrez `index.html` dans un navigateur récent, ou lancez un serveur local :
+## Survivre au Veilleur
 
-```bash
-python3 -m http.server 8000
-# puis ouvrir http://localhost:8000
-```
+- **La lampe torche (F)** éclaire, mais le Veilleur **voit la lumière de très loin**. La batterie s'use : ramasse des piles.
+- **Courir (Maj)** est plus rapide mais **fait du bruit** : il t'entend. Ton souffle est limité.
+- **Les armoires (E)** te cachent… sauf si le Veilleur t'a **vu y entrer**.
+- Un **code faux** au coffre fait du bruit et l'attire.
+- Quand il approche, ton cœur bat et l'écran rougit. S'il t'attrape : jumpscare, et tu réapparais dans le hall.
+- La manche dure **8 minutes**. Le jeu se joue seul ou **à plusieurs, en coopération** : les fusibles et la clé
+  sont partagés par toute l'équipe.
+
+## Installation dans Roblox Studio (5 minutes)
+
+1. Ouvre **Roblox Studio** et crée un jeu avec le modèle **Baseplate**
+   (la plaque grise est retirée automatiquement).
+2. Dans l'**Explorer** :
+   - clic droit sur **ServerScriptService** → *Insérer un objet* → **Script**, renomme-le `ManoirServeur`,
+     efface tout et colle le contenu de [`src/server/ManoirServeur.server.luau`](src/server/ManoirServeur.server.luau) ;
+   - ouvre **StarterPlayer**, clic droit sur **StarterPlayerScripts** → *Insérer un objet* → **LocalScript**,
+     renomme-le `ManoirClient` et colle le contenu de [`src/client/ManoirClient.client.luau`](src/client/ManoirClient.client.luau).
+3. Appuie sur **Jouer** (F5). Le Veilleur se réveille 25 secondes après le début…
+
+> 💡 Pour un rendu plus effrayant : dans l'Explorer, sélectionne **Lighting** et mets la propriété
+> **Technology** sur **Future** (les ombres de la lampe torche seront bien plus belles).
+
+Avec [Rojo](https://rojo.space) : `rojo serve` (le fichier `default.project.json` place les scripts).
 
 ## Commandes
 
-| Action | Touche |
-| --- | --- |
-| Se déplacer | `Z Q S D` (AZERTY) / `W A S D` (QWERTY) / flèches |
-| Frapper / récolter | Clic gauche (maintenir) |
-| Esquive | `Espace` ou `Maj` |
-| Construire | `1` à `5` (ou `B`), puis clic dans une zone éclairée |
-| Nourrir le foyer | `F` (1 braise, sinon 5 bois) |
-| Améliorations | `U` près du foyer |
-| Réparer / démonter la construction visée | `E` (1 bois) / `X` |
-| Annuler | Clic droit ou `Échap` |
-| Pause | `P` |
-
-## Constructions
-
-| | Coût | Rôle |
+| Action | PC | Mobile / manette |
 | --- | --- | --- |
-| Palissade | 3 bois | Bloque les ombres, qui doivent la détruire |
-| Torche | 2 bois, 1 pierre | Lumière : ralentit et affaiblit les ombres, agrandit la zone constructible |
-| Pièges à pieux | 3 bois, 2 pierres | Blesse les ombres qui marchent dessus |
-| Baliste | 6 bois, 5 pierres | Tire automatiquement |
-| Phare | 6 pierres, 2 braises | Grande lumière |
+| Se déplacer | `Z Q S D` / `W A S D` | Joystick |
+| Courir | `Maj gauche` (maintenir) | Bouton « Courir » |
+| Lampe torche | `F` | Bouton « Lampe » / `Y` |
+| Ramasser, lire, se cacher, ouvrir | `E` | Bouton d'action |
 
-## Ombres
+## Personnaliser
 
-Ombre (de base), Rôdeur (rapide, chasse le héros), Cracheur (attaque à distance), Colosse (détruit les
-constructions) et le Dévoreur (boss toutes les 5 nuits).
-
-## Structure du code
-
-```
-index.html      Page, interface et écrans
-css/style.css   Style de l'interface
-js/config.js    Réglages : héros, foyer, constructions, ombres, améliorations
-js/world.js     Génération de la carte, collisions, chemins des ombres vers le foyer
-js/game.js      Simulation : héros, combat, ombres, constructions, cycle jour/nuit
-js/render.js    Rendu et éclairage dynamique
-js/ui.js        Commandes, interface et boucle principale
-```
+En haut du script serveur, la section **RÉGLAGES** permet de changer : la durée d'une manche, le délai avant le
+réveil du monstre, sa vitesse, ses distances de vue et d'ouïe, la vitesse des joueurs et l'usure de la batterie.
